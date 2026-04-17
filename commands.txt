@@ -1,0 +1,13 @@
+Run on three different terminals
+
+Start the local services from the repo root:
+cd c:\Users\IDEAPAD\Documents\GitHub\AGC
+docker compose up -d postgres neo4j redis
+
+Start the backend:
+Set-Location 'c:\Users\IDEAPAD\Documents\GitHub\AGC\backend'
+& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\alembic.exe' upgrade head
+& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\uvicorn.exe' app.main:app --host 127.0.0.1 --port 8000 --reload
+
+Start the frontend:
+Set-Location 'c:\Users\IDEAPAD\Documents\GitHub\AGC\frontend'; $env:Path = 'C:\Program Files\nodejs;' + $env:Path; & 'C:\Program Files\nodejs\npm.cmd' run dev

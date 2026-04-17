@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, Boolean, DateTime, Integer, ForeignKey, Enum as SAEnum
+from sqlalchemy import String, Text, Boolean, DateTime, Integer, ForeignKey, Enum as SAEnum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -58,6 +58,5 @@ class ArchitectureVersion(Base):
     rules = relationship("ArchitectureRule", back_populates="architecture_version", cascade="all, delete-orphan")
 
     __table_args__ = (
-        # Unique constraint: one version number per project
-        {"comment": "Architecture version with unique version_number per project"},
+        UniqueConstraint("project_id", "version_number", name="uq_architecture_versions_project_version"),
     )

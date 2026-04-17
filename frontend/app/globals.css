@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 218 40% 7%;
+  --surface: 218 32% 12%;
+  --line: 218 18% 22%;
+  --text: 210 40% 96%;
+  --muted: 214 18% 68%;
+  --accent: 34 92% 58%;
+  --accent-foreground: 222 47% 10%;
+  --success: 150 60% 52%;
+  --warning: 38 92% 58%;
+  --danger: 0 72% 58%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: hsl(var(--text));
+  background:
+    radial-gradient(circle at top left, rgba(243, 159, 37, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 22%),
+    linear-gradient(180deg, #0a1020 0%, #05070d 100%);
+  font-family: var(--font-sans), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(243, 159, 37, 0.28);
+  color: white;
+}
+
+.grid-noise {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
