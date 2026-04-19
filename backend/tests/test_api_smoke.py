@@ -23,3 +23,18 @@ def test_openapi_exposes_versioned_api_routes():
     assert "/api/v1/auth/register" in paths
     assert "/api/v1/projects" in paths
     assert "/api/v1/projects/{project_id}/compliance/check" in paths
+    assert "/api/v1/architecture/{version_id}/relationships" in paths
+    assert "/api/v1/projects/{project_id}/uploads/contracts" in paths
+    assert "/api/v1/projects/{project_id}/documents/upload" in paths
+    assert "/api/v1/projects/{project_id}/documents" in paths
+    assert "/api/v1/projects/{project_id}/documents/dead-letter" in paths
+    assert "/api/v1/projects/{project_id}/documents/{doc_id}/process" in paths
+    assert "/api/v1/projects/{project_id}/documents/{doc_id}/job" in paths
+    assert "/api/v1/projects/{project_id}/documents/{doc_id}/replay" in paths
+    assert "/api/v1/organizations/me" in paths
+    assert "/api/v1/analytics/summary" in paths
+    assert "/api/v1/analytics/history" in paths
+    assert "/api/v1/analytics/worker-health" in paths
+    assert "/api/v1/analytics/worker-ops" in paths
+    assert "/api/v1/analytics/worker-actions/replay-retryable" in paths
+    assert "/api/v1/analytics/documents/trends" in paths

@@ -98,6 +98,27 @@ async def create_relationship(
     return APIResponse(data=result, meta=_meta())
 
 
+@router.delete("/architecture/{version_id}/relationships")
+async def delete_relationship(
+    version_id: UUID,
+    source_uid: str,
+    target_uid: str,
+    type: str,
+    user: User = Depends(require_roles("admin", "architect")),
+    neo4j_session: Neo4jSession = Depends(Neo4jConnection.get_session),
+):
+    deleted = await graph_service.delete_relationship(
+        neo4j_session,
+        source_uid=source_uid,
+        target_uid=target_uid,
+        rel_type=type,
+        architecture_version_id=str(version_id),
+    )
+    if not deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Relationship not found"})
+    return APIResponse(data={"message": "Relationship deleted"}, meta=_meta())
+
+
 @router.post("/architecture/{version_id}/relationships/batch", status_code=status.HTTP_201_CREATED)
 async def create_relationships_batch(
     version_id: UUID,

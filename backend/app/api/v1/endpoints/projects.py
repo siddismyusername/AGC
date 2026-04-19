@@ -92,7 +92,10 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
 ):
     project = await project_service.update_project(
-        db, project_id=project_id, updates=body.model_dump(exclude_unset=True)
+        db,
+        project_id=project_id,
+        updates=body.model_dump(exclude_unset=True),
+        actor_user_id=user.id,
     )
     if not project:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Project not found"})
@@ -105,7 +108,7 @@ async def delete_project(
     user: User = Depends(require_roles("admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    success = await project_service.delete_project(db, project_id=project_id)
+    success = await project_service.delete_project(db, project_id=project_id, actor_user_id=user.id)
     if not success:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Project not found"})
     return APIResponse(data={"message": "Project deleted"}, meta=_meta())
@@ -162,7 +165,12 @@ async def update_arch_status(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        version = await project_service.update_version_status(db, version_id=version_id, new_status=body.status)
+        version = await project_service.update_version_status(
+            db,
+            version_id=version_id,
+            new_status=body.status,
+            actor_user_id=user.id,
+        )
     except ValueError as e:
         msg = str(e)
         if "NOT_FOUND" in msg:
@@ -239,7 +247,12 @@ async def update_rule(
     user: User = Depends(require_roles("admin", "architect")),
     db: AsyncSession = Depends(get_db),
 ):
-    rule = await project_service.update_rule(db, rule_id=rule_id, updates=body.model_dump(exclude_unset=True))
+    rule = await project_service.update_rule(
+        db,
+        rule_id=rule_id,
+        updates=body.model_dump(exclude_unset=True),
+        actor_user_id=user.id,
+    )
     if not rule:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Rule not found"})
     return APIResponse(data=RuleOut.model_validate(rule).model_dump(), meta=_meta())
@@ -252,7 +265,7 @@ async def delete_rule(
     user: User = Depends(require_roles("admin", "architect")),
     db: AsyncSession = Depends(get_db),
 ):
-    success = await project_service.delete_rule(db, rule_id=rule_id)
+    success = await project_service.delete_rule(db, rule_id=rule_id, actor_user_id=user.id)
     if not success:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Rule not found"})
     return APIResponse(data={"message": "Rule deleted"}, meta=_meta())

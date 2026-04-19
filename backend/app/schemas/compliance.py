@@ -139,3 +139,22 @@ class CiCdTokenOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ── Upload Contract Scaffold ──
+
+class UploadContractRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(ge=1)
+
+
+class UploadContractOut(BaseModel):
+    storage_key: str
+    upload_url: str
+    method: str
+    headers: dict[str, str]
+    expires_at: datetime
+    max_size_bytes: int
+    content_type: str
+    filename: str

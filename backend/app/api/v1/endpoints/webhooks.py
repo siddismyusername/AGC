@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -18,13 +18,45 @@ from app.core.responses import APIResponse, ResponseMeta
 from app.core.security import hash_password
 from app.models.compliance import CiCdToken, Pipeline
 from app.models.user import User
-from app.schemas.compliance import CiCdTokenCreate, CiCdTokenOut, PipelineCreate, PipelineOut
+from app.schemas.compliance import (
+    CiCdTokenCreate,
+    CiCdTokenOut,
+    PipelineCreate,
+    PipelineOut,
+    UploadContractOut,
+    UploadContractRequest,
+)
 
 router = APIRouter(tags=["CI/CD Integration"])
 
 
 def _meta() -> ResponseMeta:
     return ResponseMeta(request_id=str(uuid4()), timestamp=datetime.now(timezone.utc))
+
+
+@router.post("/projects/{project_id}/uploads/contracts", status_code=status.HTTP_201_CREATED)
+async def create_upload_contract(
+    project_id: UUID,
+    body: UploadContractRequest,
+    user: User = Depends(require_roles("admin", "architect", "devops")),
+):
+    storage_key = f"projects/{project_id}/{uuid4()}-{body.filename}"
+    upload_url = f"/api/v1/projects/{project_id}/uploads/{storage_key}"
+    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=15)
+
+    return APIResponse(
+        data=UploadContractOut(
+            storage_key=storage_key,
+            upload_url=upload_url,
+            method="PUT",
+            headers={"Content-Type": body.content_type},
+            expires_at=expires_at,
+            max_size_bytes=5 * 1024 * 1024,
+            content_type=body.content_type,
+            filename=body.filename,
+        ).model_dump(),
+        meta=_meta(),
+    )
 
 
 # ─── Pipeline Management ────────────────────────────────────────────────────

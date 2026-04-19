@@ -123,6 +123,30 @@ async def create_relationship(
     return {}
 
 
+async def delete_relationship(
+    session: Neo4jSession,
+    *,
+    source_uid: str,
+    target_uid: str,
+    rel_type: str,
+    architecture_version_id: str,
+) -> bool:
+    result = await session.run(
+        f"""
+        MATCH (a:IntendedComponent {{uid: $source_uid, architecture_version_id: $version_id}})
+        MATCH (b:IntendedComponent {{uid: $target_uid, architecture_version_id: $version_id}})
+        MATCH (a)-[r:{rel_type} {{architecture_version_id: $version_id}}]->(b)
+        DELETE r
+        RETURN count(r) AS deleted
+        """,
+        source_uid=source_uid,
+        target_uid=target_uid,
+        version_id=architecture_version_id,
+    )
+    record = await result.single()
+    return record["deleted"] > 0 if record else False
+
+
 async def get_intended_graph(
     session: Neo4jSession,
     *,

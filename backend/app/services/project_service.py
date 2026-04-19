@@ -8,6 +8,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.audit import AuditLog
 from app.models.project import ArchitectureVersion, Project
 from app.models.rule import ArchitectureRule
 from app.models.user import User
@@ -35,6 +36,15 @@ async def create_project(
         created_by=user.id,
     )
     db.add(project)
+    await db.flush()
+    await _create_audit_event(
+        db,
+        action="project.create",
+        entity_type="project",
+        entity_id=project.id,
+        user_id=user.id,
+        new_value={"name": project.name, "language": project.language},
+    )
     await db.commit()
     await db.refresh(project)
     return project
@@ -77,25 +87,56 @@ async def update_project(
     *,
     project_id: UUID,
     updates: dict,
+    actor_user_id: UUID | None = None,
 ) -> Project | None:
     project = await get_project(db, project_id=project_id)
     if not project:
         return None
+    previous_values: dict = {}
+    changed_fields: dict = {}
     for k, v in updates.items():
-        if v is not None:
+        if v is not None and getattr(project, k) != v:
+            previous_values[k] = getattr(project, k)
+            changed_fields[k] = v
             setattr(project, k, v)
     project.updated_at = datetime.now(timezone.utc)
+
+    if changed_fields:
+        await _create_audit_event(
+            db,
+            action="project.update",
+            entity_type="project",
+            entity_id=project.id,
+            user_id=actor_user_id,
+            old_value=previous_values,
+            new_value=changed_fields,
+        )
+
     await db.commit()
     await db.refresh(project)
     return project
 
 
-async def delete_project(db: AsyncSession, *, project_id: UUID) -> bool:
+async def delete_project(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    actor_user_id: UUID | None = None,
+) -> bool:
     project = await get_project(db, project_id=project_id)
     if not project:
         return False
     project.is_active = False
     project.updated_at = datetime.now(timezone.utc)
+    await _create_audit_event(
+        db,
+        action="project.deactivate",
+        entity_type="project",
+        entity_id=project.id,
+        user_id=actor_user_id,
+        old_value={"is_active": True},
+        new_value={"is_active": False},
+    )
     await db.commit()
     return True
 
@@ -132,6 +173,15 @@ async def create_architecture_version(
         created_by=user_id,
     )
     db.add(version)
+    await db.flush()
+    await _create_audit_event(
+        db,
+        action="architecture_version.create",
+        entity_type="architecture_version",
+        entity_id=version.id,
+        user_id=user_id,
+        new_value={"status": version.status, "version_number": version.version_number},
+    )
     await db.commit()
     await db.refresh(version)
     return version
@@ -181,6 +231,7 @@ async def update_version_status(
     *,
     version_id: UUID,
     new_status: str,
+    actor_user_id: UUID | None = None,
 ) -> ArchitectureVersion:
     version = await get_architecture_version(db, version_id=version_id)
     if not version:
@@ -206,6 +257,16 @@ async def update_version_status(
             )
             .values(status="deprecated", updated_at=datetime.now(timezone.utc))
         )
+
+    await _create_audit_event(
+        db,
+        action="architecture_version.status_change",
+        entity_type="architecture_version",
+        entity_id=version.id,
+        user_id=actor_user_id,
+        old_value={"status": previous_status},
+        new_value={"status": new_status},
+    )
 
     await db.commit()
     await db.refresh(version)
@@ -239,6 +300,15 @@ async def create_rule(
         created_by=user_id,
     )
     db.add(rule)
+    await db.flush()
+    await _create_audit_event(
+        db,
+        action="rule.create",
+        entity_type="rule",
+        entity_id=rule.id,
+        user_id=user_id,
+        new_value={"rule_type": rule.rule_type, "severity": rule.severity},
+    )
     await db.commit()
     await db.refresh(rule)
     return rule
@@ -266,6 +336,15 @@ async def create_rules_batch(
         )
         db.add(rule)
         rules.append(rule)
+    await db.flush()
+    await _create_audit_event(
+        db,
+        action="rule.batch_create",
+        entity_type="architecture_version",
+        entity_id=version_id,
+        user_id=user_id,
+        new_value={"created_count": len(rules)},
+    )
     await db.commit()
     for r in rules:
         await db.refresh(r)
@@ -302,24 +381,78 @@ async def update_rule(
     *,
     rule_id: UUID,
     updates: dict,
+    actor_user_id: UUID | None = None,
 ) -> ArchitectureRule | None:
     rule = await get_rule(db, rule_id=rule_id)
     if not rule:
         return None
+    previous_values: dict = {}
+    changed_fields: dict = {}
     for k, v in updates.items():
-        if v is not None:
+        if v is not None and getattr(rule, k) != v:
+            previous_values[k] = getattr(rule, k)
+            changed_fields[k] = v
             setattr(rule, k, v)
     rule.updated_at = datetime.now(timezone.utc)
+
+    if changed_fields:
+        await _create_audit_event(
+            db,
+            action="rule.update",
+            entity_type="rule",
+            entity_id=rule.id,
+            user_id=actor_user_id,
+            old_value=previous_values,
+            new_value=changed_fields,
+        )
+
     await db.commit()
     await db.refresh(rule)
     return rule
 
 
-async def delete_rule(db: AsyncSession, *, rule_id: UUID) -> bool:
+async def delete_rule(
+    db: AsyncSession,
+    *,
+    rule_id: UUID,
+    actor_user_id: UUID | None = None,
+) -> bool:
     rule = await get_rule(db, rule_id=rule_id)
     if not rule:
         return False
     rule.is_active = False
     rule.updated_at = datetime.now(timezone.utc)
+    await _create_audit_event(
+        db,
+        action="rule.deactivate",
+        entity_type="rule",
+        entity_id=rule.id,
+        user_id=actor_user_id,
+        old_value={"is_active": True},
+        new_value={"is_active": False},
+    )
     await db.commit()
     return True
+
+
+async def _create_audit_event(
+    db: AsyncSession,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: UUID | None,
+    user_id: UUID | None,
+    old_value: dict | None = None,
+    new_value: dict | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    )
+    await db.flush()

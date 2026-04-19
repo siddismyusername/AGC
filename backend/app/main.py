@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     logger.info("Neo4j connected & indexes ensured.")
 
     # Import models so Alembic / Base.metadata knows them
-    from app.models import audit, compliance, organization, project, rule, user  # noqa: F401
+    from app.models import audit, compliance, document, organization, project, rule, user  # noqa: F401
 
     logger.info("ArchGuard API ready  ✓")
     yield

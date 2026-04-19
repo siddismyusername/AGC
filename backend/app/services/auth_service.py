@@ -15,6 +15,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.models.audit import AuditLog
 from app.models.organization import Organization
 from app.models.user import RefreshToken, User
 
@@ -55,6 +56,15 @@ async def register_user(
 
     # Generate tokens
     tokens = await _create_token_pair(db, user)
+
+    await _create_audit_event(
+        db,
+        action="auth.register",
+        entity_type="user",
+        entity_id=user.id,
+        user_id=user.id,
+        new_value={"email": user.email, "role": user.role},
+    )
     await db.commit()
 
     return {
@@ -75,6 +85,14 @@ async def login_user(db: AsyncSession, *, email: str, password: str) -> dict:
         raise ValueError("USER_INACTIVE")
 
     tokens = await _create_token_pair(db, user)
+
+    await _create_audit_event(
+        db,
+        action="auth.login",
+        entity_type="session",
+        entity_id=None,
+        user_id=user.id,
+    )
     await db.commit()
 
     return {"user": user, **tokens}
@@ -119,6 +137,14 @@ async def refresh_tokens(db: AsyncSession, *, refresh_token_raw: str) -> dict:
     # Link old → new
     stored_token.replaced_by = None  # We'd need the new token ID here in production
 
+    await _create_audit_event(
+        db,
+        action="auth.refresh",
+        entity_type="session",
+        entity_id=None,
+        user_id=user.id,
+    )
+
     await db.commit()
     return {"user": user, **new_tokens}
 
@@ -132,6 +158,18 @@ async def revoke_refresh_token(db: AsyncSession, *, refresh_token_raw: str) -> N
     for t in tokens:
         if verify_password(refresh_token_raw, t.token_hash):
             t.is_revoked = True
+
+            result = await db.execute(select(User).where(User.id == t.user_id))
+            user = result.scalar_one_or_none()
+            if user:
+                await _create_audit_event(
+                    db,
+                    action="auth.logout",
+                    entity_type="session",
+                    entity_id=None,
+                    user_id=user.id,
+                )
+
             await db.commit()
             return
 
@@ -163,3 +201,26 @@ async def _create_token_pair(db: AsyncSession, user: User) -> dict:
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
+
+
+async def _create_audit_event(
+    db: AsyncSession,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: UUID | None,
+    user_id: UUID | None,
+    old_value: dict | None = None,
+    new_value: dict | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=user_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_value=old_value,
+            new_value=new_value,
+        )
+    )
+    await db.flush()

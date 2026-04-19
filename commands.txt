@@ -1,4 +1,4 @@
-Run on three different terminals
+Run on four different terminals
 
 Start the local services from the repo root:
 cd c:\Users\IDEAPAD\Documents\GitHub\AGC
@@ -6,8 +6,33 @@ docker compose up -d postgres neo4j redis
 
 Start the backend:
 Set-Location 'c:\Users\IDEAPAD\Documents\GitHub\AGC\backend'
-& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\alembic.exe' upgrade head
-& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\uvicorn.exe' app.main:app --host 127.0.0.1 --port 8000 --reload
+& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\python.exe' -m alembic upgrade head
+& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 Start the frontend:
 Set-Location 'c:\Users\IDEAPAD\Documents\GitHub\AGC\frontend'; $env:Path = 'C:\Program Files\nodejs;' + $env:Path; & 'C:\Program Files\nodejs\npm.cmd' run dev
+
+Start the Celery worker (for background document processing):
+Set-Location 'c:\Users\IDEAPAD\Documents\GitHub\AGC\backend'
+& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\python.exe' -m celery -A app.core.celery_app:celery_app worker --loglevel=info --pool=solo
+
+Configure external OCR/NLP provider (HTTP extractor mode):
+1) Open backend/.env and set these values:
+	DOCUMENT_EXTRACTOR_PROVIDER=http
+	DOCUMENT_EXTRACTOR_HTTP_URL=https://your-provider.example/v1/extract
+	DOCUMENT_EXTRACTOR_HTTP_TIMEOUT_SECONDS=20
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY=<primary-key>
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY_SECONDARY=<secondary-key-optional>
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY_HEADER=Authorization
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY_SCHEME=Bearer
+2) For providers that require raw API key headers (not Authorization), set:
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY_HEADER=x-api-key
+	DOCUMENT_EXTRACTOR_HTTP_API_KEY_SCHEME=
+3) Restart backend and worker after key changes:
+	& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+	& 'c:\Users\IDEAPAD\Documents\GitHub\AGC\.venv\Scripts\python.exe' -m celery -A app.core.celery_app:celery_app worker --loglevel=info --pool=solo
+4) Key rotation runbook:
+	- Set new key as DOCUMENT_EXTRACTOR_HTTP_API_KEY_SECONDARY and restart services.
+	- Validate processing from Documents UI (watch job endpoint runtime state).
+	- Promote secondary key to DOCUMENT_EXTRACTOR_HTTP_API_KEY.
+	- Clear DOCUMENT_EXTRACTOR_HTTP_API_KEY_SECONDARY after cutover and restart services.

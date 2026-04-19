@@ -24,6 +24,18 @@ class Settings(BaseSettings):
     # ── Redis ──
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # ── Document Extraction ──
+    DOCUMENT_EXTRACTOR_PROVIDER: str = "scaffolded"
+    DOCUMENT_EXTRACTOR_HTTP_URL: str | None = None
+    DOCUMENT_EXTRACTOR_HTTP_TIMEOUT_SECONDS: int = 20
+    DOCUMENT_EXTRACTOR_HTTP_API_KEY: str | None = None
+    DOCUMENT_EXTRACTOR_HTTP_API_KEY_SECONDARY: str | None = None
+    DOCUMENT_EXTRACTOR_HTTP_API_KEY_HEADER: str = "Authorization"
+    DOCUMENT_EXTRACTOR_HTTP_API_KEY_SCHEME: str = "Bearer"
+    DOCUMENT_EXTRACTOR_HTTP_RETRY_ATTEMPTS: int = 3
+    DOCUMENT_EXTRACTOR_HTTP_RETRY_BACKOFF_SECONDS: float = 1.0
+    DOCUMENT_EXTRACTOR_HTTP_RETRY_MAX_BACKOFF_SECONDS: float = 8.0
+
     # ── JWT ──
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
