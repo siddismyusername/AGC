@@ -3,14 +3,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
+import GovernanceActivityRow, { summarizeAuditEvent } from '../../components/governance-activity-row';
 import {
+  AICandidateReviewTrendOut,
   AnalyticsHistoryPointOut,
-  AuditEvent,
+  DocumentOut,
   DocumentMetricsTrendPointOut,
+  ExtractorDiagnosticsHistoryEntry,
+  ExtractorDiagnosticsSummary,
+  getAICandidateReviewTrend,
   getAnalyticsHistory,
   getDocumentMetricsTrend,
   getAnalyticsSummary,
-  getAuditEvents,
+  listDocuments,
   getProject,
   getProjectHealth,
   getProjects,
@@ -20,11 +25,18 @@ import {
   WorkerOpsHintsOut,
 } from '../../lib/api';
 import {
+  formatExtractorDiagnosticsTimestamp,
+  summarizeExtractorDiagnosticsHistoryEntry,
+} from '../../lib/extractor-diagnostics';
+import useAuditEvents from '../../lib/use-audit-events';
+import useGovernanceContext from '../../lib/use-governance-context';
+import {
   projectSummary as fallbackProjectSummary,
   recentProjects as fallbackRecentProjects,
 } from '../../lib/mock-data';
 import { Activity, AlertTriangle, CheckCircle2, GitBranch, TrendingUp } from 'lucide-react';
 import RouteGuard from '../../components/route-guard';
+import AcceptanceRateTrendChip from '../../components/acceptance-rate-trend-chip';
 
 const statusStyles: Record<string, string> = {
   healthy: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/20',
@@ -52,43 +64,105 @@ const fallbackProjectCards: ProjectCard[] = fallbackRecentProjects.map((item) =>
   status: item.status as 'healthy' | 'warning' | 'attention',
 }));
 
+function parseDiagnosticsHistory(extractedData: Record<string, unknown>): ExtractorDiagnosticsHistoryEntry[] {
+  const rawHistory = extractedData.extractor_diagnostics_history;
+  if (!Array.isArray(rawHistory)) {
+    return [];
+  }
+
+  return rawHistory
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    .map((entry) => ({
+      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : '',
+      event: typeof entry.event === 'string' ? entry.event : 'unknown',
+      trigger: typeof entry.trigger === 'string' ? entry.trigger : undefined,
+      processing_status: (typeof entry.processing_status === 'string' ? entry.processing_status : 'pending') as DocumentOut['processing_status'],
+      queue_backend: typeof entry.queue_backend === 'string' ? entry.queue_backend : null,
+      task_id: typeof entry.task_id === 'string' ? entry.task_id : null,
+      request_id: typeof entry.request_id === 'string' ? entry.request_id : null,
+      key_slot: typeof entry.key_slot === 'string' ? entry.key_slot : null,
+      provider_attempts: typeof entry.provider_attempts === 'number' ? entry.provider_attempts : null,
+      error_code: typeof entry.error_code === 'string' ? entry.error_code : null,
+      retryable: typeof entry.retryable === 'boolean' ? entry.retryable : null,
+    }))
+    .filter((entry) => !!entry.timestamp)
+    .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
+}
+
+function extractLatestDiagnostics(projectName: string, documents: DocumentOut[]): ExtractorDiagnosticsSummary | null {
+  const candidates = documents
+    .map((document) => {
+      const extractedData = document.extracted_data ?? {};
+      const provider = extractedData.provider as Record<string, unknown> | undefined;
+      const error = extractedData.error as Record<string, unknown> | undefined;
+      const deadLetter = extractedData.dead_letter as Record<string, unknown> | undefined;
+      const job = extractedData.job as Record<string, unknown> | undefined;
+
+      const requestId = typeof provider?.request_id === 'string'
+        ? provider.request_id
+        : typeof error?.details === 'object' && error?.details !== null && typeof (error.details as Record<string, unknown>).request_id === 'string'
+          ? String((error.details as Record<string, unknown>).request_id)
+          : null;
+
+      const keySlot = typeof provider?.key_slot === 'string'
+        ? provider.key_slot
+        : typeof error?.details === 'object' && error?.details !== null && typeof (error.details as Record<string, unknown>).key_slot === 'string'
+          ? String((error.details as Record<string, unknown>).key_slot)
+          : null;
+
+      const providerAttempts = typeof provider?.attempts === 'number'
+        ? provider.attempts
+        : typeof error?.attempt === 'number'
+          ? error.attempt
+          : null;
+
+      const errorCode = typeof error?.code === 'string' ? error.code : null;
+      const retryable = typeof error?.retryable === 'boolean'
+        ? error.retryable
+        : typeof deadLetter?.retryable === 'boolean'
+          ? deadLetter.retryable
+          : null;
+      const queueBackend = typeof job?.queue_backend === 'string' ? job.queue_backend : null;
+      const history = parseDiagnosticsHistory(extractedData);
+
+      if (!requestId && !keySlot && providerAttempts === null && !errorCode && retryable === null && !queueBackend && history.length === 0) {
+        return null;
+      }
+
+      return {
+        project_name: projectName,
+        document_name: document.file_name,
+        file_type: document.file_type,
+        processing_status: document.processing_status,
+        queue_backend: queueBackend,
+        request_id: requestId,
+        key_slot: keySlot,
+        provider_attempts: providerAttempts,
+        error_code: errorCode,
+        retryable,
+        history,
+        updated_at: document.updated_at,
+      } satisfies ExtractorDiagnosticsSummary;
+    })
+    .filter((item): item is ExtractorDiagnosticsSummary => item !== null)
+    .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
+
+  return candidates[0] ?? null;
+}
+
 export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [summaryCards, setSummaryCards] = useState(fallbackProjectSummary);
   const [projectCards, setProjectCards] = useState<ProjectCard[]>(fallbackProjectCards);
-  const [activityFeed, setActivityFeed] = useState<string[]>([]);
   const [trendPoints, setTrendPoints] = useState<AnalyticsHistoryPointOut[]>([]);
   const [documentTrendPoints, setDocumentTrendPoints] = useState<DocumentMetricsTrendPointOut[]>([]);
   const [workerHealth, setWorkerHealth] = useState<WorkerHealthOut | null>(null);
   const [workerOpsHints, setWorkerOpsHints] = useState<WorkerOpsHintsOut | null>(null);
-
-  function formatAuditEvent(event: AuditEvent): string {
-    const actor = event.user_email ?? 'System';
-    const action = event.action.replaceAll('.', ' ').replaceAll('_', ' ');
-    const when = new Date(event.created_at).toLocaleString();
-    const newValue = event.new_value ?? {};
-    const oldValue = event.old_value ?? {};
-    const changedKeys = Object.keys(newValue);
-
-    if (changedKeys.length > 0) {
-      const primaryKey = changedKeys[0];
-      const previous = oldValue[primaryKey];
-      const next = newValue[primaryKey];
-
-      if (previous !== undefined) {
-        return `${actor} changed ${event.entity_type} ${primaryKey} from "${String(previous)}" to "${String(next)}" at ${when}.`;
-      }
-
-      if (changedKeys.length > 1) {
-        return `${actor} performed ${action} on ${event.entity_type} (${changedKeys.length} fields updated) at ${when}.`;
-      }
-
-      return `${actor} set ${event.entity_type} ${primaryKey} to "${String(next)}" at ${when}.`;
-    }
-
-    return `${actor} performed ${action} on ${event.entity_type} at ${when}.`;
-  }
+  const [extractorDiagnostics, setExtractorDiagnostics] = useState<ExtractorDiagnosticsSummary | null>(null);
+  const [aiReviewAnalytics, setAiReviewAnalytics] = useState<AICandidateReviewTrendOut | null>(null);
+  const { auditEvents: activityFeed } = useAuditEvents(1, 8);
+  const { sessionUser, organizationMembersById } = useGovernanceContext();
 
   useEffect(() => {
     async function loadDashboard() {
@@ -96,16 +170,17 @@ export default function DashboardPage() {
       setErrorMessage(null);
 
       try {
-        const [projects, summary, events, history, worker, workerOps, documentTrend] = await Promise.all([
+        const [projects, summary, history, worker, workerOps, documentTrend, aiReviewTrend] = await Promise.all([
           getProjects(),
           getAnalyticsSummary(),
-          getAuditEvents(1, 8),
           getAnalyticsHistory(14),
           getWorkerHealth(),
           getWorkerOpsHints(),
           getDocumentMetricsTrend(14),
+          getAICandidateReviewTrend(14),
         ]);
         const activeProjects = projects.filter((item) => item.is_active);
+        const topActiveProjects = activeProjects.slice(0, 3);
 
         const healthEntries = await Promise.all(
           activeProjects.map(async (project) => ({
@@ -159,20 +234,33 @@ export default function DashboardPage() {
 
         setProjectCards(cards.length > 0 ? cards : fallbackProjectCards);
 
-        setActivityFeed(events.map(formatAuditEvent));
         setTrendPoints(history.points.slice(-5));
         setWorkerHealth(worker);
         setWorkerOpsHints(workerOps);
         setDocumentTrendPoints(documentTrend.points.slice(-7));
+        setAiReviewAnalytics(aiReviewTrend);
+
+        const diagnosticsCandidates = await Promise.all(
+          topActiveProjects.map(async (project) => ({
+            projectName: project.name,
+            documents: await listDocuments(project.id),
+          })),
+        );
+        const latestDiagnostics = diagnosticsCandidates
+          .map(({ projectName, documents }) => extractLatestDiagnostics(projectName, documents))
+          .filter((item): item is ExtractorDiagnosticsSummary => item !== null)
+          .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())[0] ?? null;
+        setExtractorDiagnostics(latestDiagnostics);
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Failed to load dashboard data');
         setProjectCards(fallbackProjectCards);
         setSummaryCards(fallbackProjectSummary);
-        setActivityFeed([]);
         setTrendPoints([]);
         setWorkerHealth(null);
         setWorkerOpsHints(null);
         setDocumentTrendPoints([]);
+        setExtractorDiagnostics(null);
+        setAiReviewAnalytics(null);
       } finally {
         setIsLoading(false);
       }
@@ -241,7 +329,7 @@ export default function DashboardPage() {
           {errorMessage ? <p className="mt-4 text-sm text-rose-300">{errorMessage}</p> : null}
         </header>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           {summaryCards.map((item) => (
             <article key={item.label} className="rounded-[1.75rem] border border-white/10 bg-slate-950/70 p-5 shadow-halo backdrop-blur">
               <p className="text-sm text-slate-400">{item.label}</p>
@@ -251,6 +339,57 @@ export default function DashboardPage() {
               </div>
             </article>
           ))}
+          <article className="rounded-[1.75rem] border border-white/10 bg-slate-950/70 p-5 shadow-halo backdrop-blur">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-slate-400">AI review acceptance</p>
+              <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-100">
+                Trend
+              </span>
+            </div>
+            {aiReviewAnalytics ? (
+              <>
+                <div className="mt-3 flex items-end justify-between gap-4">
+                  <span className="text-4xl font-semibold text-white">
+                    {aiReviewAnalytics.acceptance_rate_percent !== null ? `${aiReviewAnalytics.acceptance_rate_percent.toFixed(1)}%` : 'n/a'}
+                  </span>
+                  <span className="text-right text-xs text-emerald-200">
+                    <span className="block">{aiReviewAnalytics.total_reviews} reviews</span>
+                    <span className="block text-slate-400">{aiReviewAnalytics.reviewed_documents} documents</span>
+                  </span>
+                </div>
+                <div className="mt-4 flex items-end gap-1">
+                  {aiReviewAnalytics.points.length > 0 ? (
+                    aiReviewAnalytics.points.slice(-8).map((point, index) => {
+                      const barHeight = point.acceptance_rate_percent === null ? 18 : Math.max(18, Math.min(100, point.acceptance_rate_percent));
+                      return (
+                        <span
+                          key={`${point.bucket_start}-${index}`}
+                          className="flex-1 rounded-full bg-emerald-300/80"
+                          style={{ height: `${barHeight}px`, minHeight: '18px' }}
+                        />
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-full border border-dashed border-white/10 px-3 py-2 text-xs text-slate-400">
+                      No review trend yet
+                    </div>
+                  )}
+                </div>
+                <AcceptanceRateTrendChip
+                  className="mt-4 w-full justify-between"
+                  acceptanceRatePercent={aiReviewAnalytics.acceptance_rate_percent}
+                  reviewCount={aiReviewAnalytics.total_reviews}
+                  points={aiReviewAnalytics.points}
+                  tone="dark"
+                  compact
+                />
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">
+                No candidate-review trend is available yet. Review AI candidates to populate this metric.
+              </p>
+            )}
+          </article>
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -356,6 +495,17 @@ export default function DashboardPage() {
                       <li key={item}>- {item}</li>
                     ))}
                   </ul>
+                  <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3 text-xs text-slate-300">
+                    <p className="font-semibold text-amber-200">Replay activity</p>
+                    {workerOpsHints.last_replay_requested_at ? (
+                      <p className="mt-1">
+                        Last replay: {workerOpsHints.last_replay_document_count} document(s) at{' '}
+                        {new Date(workerOpsHints.last_replay_requested_at).toLocaleString()}.
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-slate-400">No replay activity recorded yet for this organization.</p>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {workerOpsHints.runbook_commands.slice(0, 2).map((entry) => (
                       <div key={entry.label} className="rounded-xl border border-white/10 bg-slate-950/70 p-2">
@@ -367,6 +517,116 @@ export default function DashboardPage() {
                   </div>
                 </div>
               ) : null}
+            </article>
+
+            <article className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-cyan-400/10 p-3 text-cyan-200">
+                  <CheckCircle2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm uppercase tracking-[0.3em] text-white/45">Extractor diagnostics</p>
+                  <h2 className="mt-1 text-xl font-semibold text-white">Latest document trace</h2>
+                </div>
+              </div>
+
+              {extractorDiagnostics ? (
+                <div className="mt-4 space-y-2 text-sm text-slate-300">
+                  <p>Project: {extractorDiagnostics.project_name}</p>
+                  <p>Document: {extractorDiagnostics.document_name} ({extractorDiagnostics.file_type})</p>
+                  <p>Status: {extractorDiagnostics.processing_status}</p>
+                  <p>Queue: {extractorDiagnostics.queue_backend ?? 'n/a'}</p>
+                  <p>Request ID: {extractorDiagnostics.request_id ?? 'n/a'}</p>
+                  <p>Auth key slot: {extractorDiagnostics.key_slot ?? 'n/a'}</p>
+                  <p>Attempts: {extractorDiagnostics.provider_attempts ?? 0}</p>
+                  <p>Error code: {extractorDiagnostics.error_code ?? 'n/a'}</p>
+                  <p>Retryable: {extractorDiagnostics.retryable === null ? 'n/a' : extractorDiagnostics.retryable ? 'yes' : 'no'}</p>
+                  {extractorDiagnostics.history.length > 0 ? (
+                    <div className="mt-3">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Recent history</p>
+                      <ul className="mt-2 space-y-1">
+                        {extractorDiagnostics.history.slice(0, 4).map((entry) => (
+                          <li key={`${entry.timestamp}-${entry.event}`} className="rounded-lg border border-white/10 bg-black/20 px-2 py-1 text-xs text-slate-300">
+                            <p>{summarizeExtractorDiagnosticsHistoryEntry(entry)}</p>
+                            <p className="text-[11px] text-slate-400">{formatExtractorDiagnosticsTimestamp(entry.timestamp)}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  No extractor diagnostics are available yet. Process or fail a document to populate this view.
+                </p>
+              )}
+            </article>
+
+            <article className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-emerald-400/10 p-3 text-emerald-200">
+                  <Activity className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm uppercase tracking-[0.3em] text-white/45">AI review governance</p>
+                  <h2 className="mt-1 text-xl font-semibold text-white">Accept / reject trend</h2>
+                </div>
+              </div>
+
+              {aiReviewAnalytics ? (
+                <div className="mt-4 space-y-3 text-sm text-slate-300">
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                      <p className="uppercase tracking-[0.25em] text-slate-500">Reviews</p>
+                      <p className="mt-1 text-2xl font-semibold text-white">{aiReviewAnalytics.total_reviews}</p>
+                      <p className="mt-1 text-slate-400">Across {aiReviewAnalytics.reviewed_documents} documents</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                      <p className="uppercase tracking-[0.25em] text-slate-500">Acceptance rate</p>
+                      <p className="mt-1 text-2xl font-semibold text-white">
+                        {aiReviewAnalytics.acceptance_rate_percent !== null ? `${aiReviewAnalytics.acceptance_rate_percent.toFixed(1)}%` : 'n/a'}
+                      </p>
+                      <p className="mt-1 text-slate-400">
+                        {aiReviewAnalytics.accepted_candidates} accepted • {aiReviewAnalytics.rejected_candidates} rejected
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
+                    <p className="font-semibold text-emerald-200">Latest review</p>
+                    {aiReviewAnalytics.last_reviewed_at ? (
+                      <p className="mt-1">{new Date(aiReviewAnalytics.last_reviewed_at).toLocaleString()}</p>
+                    ) : (
+                      <p className="mt-1 text-slate-400">No AI candidate reviews recorded yet.</p>
+                    )}
+                  </div>
+
+                  {aiReviewAnalytics.points.length > 0 ? (
+                    <ul className="space-y-2">
+                      {aiReviewAnalytics.points.slice(-5).map((point) => (
+                        <li
+                          key={point.bucket_start}
+                          className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-3 py-2"
+                        >
+                          <span>{new Date(point.bucket_start).toLocaleDateString()}</span>
+                          <span className="text-slate-200">
+                            {point.accepted_candidates} accepted • {point.rejected_candidates} rejected
+                            {point.acceptance_rate_percent !== null ? ` • ${point.acceptance_rate_percent.toFixed(1)}% accept` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm leading-6 text-slate-300">
+                      No review decisions yet. Use the Documents page to accept or reject AI candidates and this panel will show the trend.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  No AI review analytics available yet. Review document candidates to populate governance signals.
+                </p>
+              )}
             </article>
 
             <article className="rounded-[2rem] border border-white/10 bg-white/5 p-6 backdrop-blur">
@@ -413,9 +673,15 @@ export default function DashboardPage() {
               </div>
 
               <ul className="mt-5 space-y-3">
-                {activityFeed.length > 0 ? activityFeed.map((item) => (
-                  <li key={item} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-300">
-                    {item}
+                {activityFeed.length > 0 ? activityFeed.map((event) => (
+                  <li key={event.id}>
+                    <GovernanceActivityRow
+                      event={event}
+                      summary={summarizeAuditEvent(event)}
+                      sessionUser={sessionUser}
+                      membersById={organizationMembersById}
+                      tone="dark"
+                    />
                   </li>
                 )) : (
                   <li className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-slate-400">

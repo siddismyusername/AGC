@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -26,6 +27,8 @@ from app.schemas.compliance import (
     UploadContractOut,
     UploadContractRequest,
 )
+from app.services import project_service
+from app.services.compliance_engine import run_compliance_check
 
 router = APIRouter(tags=["CI/CD Integration"])
 
@@ -185,6 +188,97 @@ def _verify_gitlab_token(token: str, secret: str) -> bool:
     return hmac.compare_digest(token, secret)
 
 
+def _resolve_branch(ref_value: str | None, *, default_branch: str = "main") -> str:
+    if not isinstance(ref_value, str) or not ref_value.strip():
+        return default_branch
+    segments = [segment for segment in ref_value.split("/") if segment]
+    return segments[-1] if segments else default_branch
+
+
+def _extract_github_context(event_name: str | None, payload: dict) -> tuple[str, str] | None:
+    if event_name == "push":
+        commit = str(payload.get("after") or "").strip()[:40]
+        branch = _resolve_branch(payload.get("ref"))
+        if len(commit) < 7:
+            return None
+        return commit, branch
+
+    if event_name == "pull_request":
+        pull_request = payload.get("pull_request") if isinstance(payload.get("pull_request"), dict) else {}
+        head = pull_request.get("head") if isinstance(pull_request.get("head"), dict) else {}
+        commit = str(head.get("sha") or "").strip()[:40]
+        branch = str(head.get("ref") or "").strip() or "main"
+        if len(commit) < 7:
+            return None
+        return commit, branch
+
+    return None
+
+
+def _extract_gitlab_context(event_name: str | None, payload: dict) -> tuple[str, str] | None:
+    if event_name == "Push Hook":
+        commit = str(payload.get("after") or "").strip()[:40]
+        branch = _resolve_branch(payload.get("ref"))
+        if len(commit) < 7:
+            return None
+        return commit, branch
+
+    if event_name == "Merge Request Hook":
+        object_attributes = payload.get("object_attributes") if isinstance(payload.get("object_attributes"), dict) else {}
+        last_commit = object_attributes.get("last_commit") if isinstance(object_attributes.get("last_commit"), dict) else {}
+        commit = str(last_commit.get("id") or "").strip()[:40]
+        branch = str(object_attributes.get("source_branch") or "").strip() or "main"
+        if len(commit) < 7:
+            return None
+        return commit, branch
+
+    return None
+
+
+async def _execute_pipeline_compliance(
+    *,
+    db: AsyncSession,
+    pipeline: Pipeline,
+    commit_hash: str,
+    branch: str,
+) -> dict:
+    active_version = await project_service.get_active_version(db, project_id=pipeline.project_id)
+    if not active_version:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "NO_ACTIVE_ARCHITECTURE_VERSION",
+                "message": "No active architecture version is available for CI/CD compliance checks.",
+            },
+        )
+
+    pipeline_config = pipeline.config if isinstance(pipeline.config, dict) else {}
+    compliance_options = pipeline_config.get("compliance_options") if isinstance(pipeline_config.get("compliance_options"), dict) else {}
+
+    report = await run_compliance_check(
+        db=db,
+        neo4j_session=await anext(Neo4jConnection.get_session()),
+        project_id=pipeline.project_id,
+        architecture_version_id=active_version.id,
+        commit_hash=commit_hash,
+        branch=branch,
+        trigger="ci_cd",
+        pipeline_id=pipeline.id,
+        options=compliance_options,
+    )
+
+    should_block = report.status in {"failed", "error"}
+    return {
+        "compliance_report_id": str(report.id),
+        "compliance_status": report.status,
+        "health_score": report.health_score,
+        "total_violations": report.total_violations,
+        "critical_violations": report.critical_count,
+        "major_violations": report.major_count,
+        "should_block_pipeline": should_block,
+    }
+
+
 @router.post("/webhooks/{pipeline_id}/github")
 async def github_webhook(
     pipeline_id: UUID,
@@ -199,49 +293,68 @@ async def github_webhook(
     if not pipeline:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Pipeline not found"})
 
+    if pipeline.provider != "github_actions":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_PIPELINE_PROVIDER", "message": "Pipeline provider does not match GitHub webhook endpoint"},
+        )
+
     body = await request.body()
 
-    # Verify signature
-    if x_hub_signature_256:
-        if not _verify_github_signature(body, x_hub_signature_256, pipeline.webhook_secret):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_SIGNATURE", "message": "Webhook signature verification failed"})
-
-    payload = await request.json()
-
-    # Handle different event types
-    if x_github_event == "push":
-        commit = payload.get("after", "")[:40]
-        branch = payload.get("ref", "refs/heads/main").split("/")[-1]
-        return APIResponse(
-            data={
-                "message": "Push event received",
-                "pipeline_id": str(pipeline_id),
-                "commit": commit,
-                "branch": branch,
-                "action": "compliance_check_queued",
-            },
-            meta=_meta(),
+    if not x_hub_signature_256:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "MISSING_SIGNATURE", "message": "GitHub signature header is required"},
         )
-    elif x_github_event == "pull_request":
-        pr = payload.get("pull_request", {})
-        commit = pr.get("head", {}).get("sha", "")[:40]
-        branch = pr.get("head", {}).get("ref", "")
-        return APIResponse(
-            data={
-                "message": "Pull request event received",
-                "pipeline_id": str(pipeline_id),
-                "commit": commit,
-                "branch": branch,
-                "pr_number": payload.get("number"),
-                "action": "compliance_check_queued",
-            },
-            meta=_meta(),
+    if not _verify_github_signature(body, x_hub_signature_256, pipeline.webhook_secret):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_SIGNATURE", "message": "Webhook signature verification failed"})
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_WEBHOOK_PAYLOAD", "message": "Webhook payload must be valid JSON"},
         )
-    elif x_github_event == "ping":
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_WEBHOOK_PAYLOAD", "message": "Webhook payload must be a JSON object"},
+        )
+
+    if x_github_event == "ping":
         return APIResponse(data={"message": "pong"}, meta=_meta())
 
+    context = _extract_github_context(x_github_event, payload)
+    if context is None:
+        return APIResponse(
+            data={
+                "message": f"Event '{x_github_event}' acknowledged but ignored",
+                "pipeline_id": str(pipeline_id),
+                "action": "ignored",
+                "should_block_pipeline": False,
+            },
+            meta=_meta(),
+        )
+
+    commit, branch = context
+    compliance_result = await _execute_pipeline_compliance(
+        db=db,
+        pipeline=pipeline,
+        commit_hash=commit,
+        branch=branch,
+    )
+
     return APIResponse(
-        data={"message": f"Event '{x_github_event}' acknowledged but not processed"},
+        data={
+            "message": f"GitHub event '{x_github_event}' processed",
+            "pipeline_id": str(pipeline_id),
+            "commit": commit,
+            "branch": branch,
+            "action": "compliance_check_completed",
+            **compliance_result,
+        },
         meta=_meta(),
     )
 
@@ -260,43 +373,63 @@ async def gitlab_webhook(
     if not pipeline:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Pipeline not found"})
 
-    # Verify token
-    if x_gitlab_token:
-        if not _verify_gitlab_token(x_gitlab_token, pipeline.webhook_secret):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_TOKEN", "message": "Webhook token verification failed"})
+    if pipeline.provider != "gitlab_ci":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_PIPELINE_PROVIDER", "message": "Pipeline provider does not match GitLab webhook endpoint"},
+        )
 
-    payload = await request.json()
+    if not x_gitlab_token:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "MISSING_TOKEN", "message": "GitLab token header is required"},
+        )
+    if not _verify_gitlab_token(x_gitlab_token, pipeline.webhook_secret):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"code": "INVALID_TOKEN", "message": "Webhook token verification failed"})
 
-    if x_gitlab_event == "Push Hook":
-        commit = payload.get("after", "")[:40]
-        branch = payload.get("ref", "refs/heads/main").split("/")[-1]
+    body = await request.body()
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_WEBHOOK_PAYLOAD", "message": "Webhook payload must be valid JSON"},
+        )
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "INVALID_WEBHOOK_PAYLOAD", "message": "Webhook payload must be a JSON object"},
+        )
+
+    context = _extract_gitlab_context(x_gitlab_event, payload)
+    if context is None:
         return APIResponse(
             data={
-                "message": "Push event received",
+                "message": f"Event '{x_gitlab_event}' acknowledged but ignored",
                 "pipeline_id": str(pipeline_id),
-                "commit": commit,
-                "branch": branch,
-                "action": "compliance_check_queued",
+                "action": "ignored",
+                "should_block_pipeline": False,
             },
             meta=_meta(),
         )
-    elif x_gitlab_event == "Merge Request Hook":
-        mr = payload.get("object_attributes", {})
-        commit = mr.get("last_commit", {}).get("id", "")[:40]
-        branch = mr.get("source_branch", "")
-        return APIResponse(
-            data={
-                "message": "Merge request event received",
-                "pipeline_id": str(pipeline_id),
-                "commit": commit,
-                "branch": branch,
-                "mr_iid": mr.get("iid"),
-                "action": "compliance_check_queued",
-            },
-            meta=_meta(),
-        )
+
+    commit, branch = context
+    compliance_result = await _execute_pipeline_compliance(
+        db=db,
+        pipeline=pipeline,
+        commit_hash=commit,
+        branch=branch,
+    )
 
     return APIResponse(
-        data={"message": f"Event '{x_gitlab_event}' acknowledged but not processed"},
+        data={
+            "message": f"GitLab event '{x_gitlab_event}' processed",
+            "pipeline_id": str(pipeline_id),
+            "commit": commit,
+            "branch": branch,
+            "action": "compliance_check_completed",
+            **compliance_result,
+        },
         meta=_meta(),
     )

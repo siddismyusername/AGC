@@ -3,14 +3,13 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
+import GovernanceActivityRow, { summarizeAuditEvent } from '../../../components/governance-activity-row';
 import RouteGuard from '../../../components/route-guard';
 import {
-  AuditEvent,
   ArchitectureVersionOut,
   createRule,
   deactivateRule,
   getArchitectureVersions,
-  getAuditEvents,
   getProjects,
   listRules,
   ProjectListItem,
@@ -19,6 +18,8 @@ import {
   RuleUpdatePayload,
   updateRule,
 } from '../../../lib/api';
+import useAuditEvents from '../../../lib/use-audit-events';
+import useGovernanceContext from '../../../lib/use-governance-context';
 
 type RuleEditorDraft = {
   rule_text: string;
@@ -48,7 +49,8 @@ export default function RuleEditorPage() {
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
   const [pendingRuleActionId, setPendingRuleActionId] = useState<string | null>(null);
   const [isBulkDeactivating, setIsBulkDeactivating] = useState(false);
-  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const { auditEvents, reloadAuditEvents } = useAuditEvents(1, 12, { enabled: !!selectedVersionId });
+  const { sessionUser, organizationMembersById } = useGovernanceContext();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 4;
 
@@ -103,7 +105,6 @@ export default function RuleEditorPage() {
       if (activeProjects.length === 0) {
         setVersions([]);
         setRules([]);
-        setAuditEvents([]);
         setSelectedProjectId('');
         setSelectedVersionId('');
         return;
@@ -117,7 +118,6 @@ export default function RuleEditorPage() {
       setProjects([]);
       setVersions([]);
       setRules([]);
-      setAuditEvents([]);
     } finally {
       setIsLoadingProjects(false);
     }
@@ -134,7 +134,6 @@ export default function RuleEditorPage() {
       if (versionList.length === 0) {
         setSelectedVersionId('');
         setRules([]);
-        setAuditEvents([]);
         return;
       }
 
@@ -147,7 +146,6 @@ export default function RuleEditorPage() {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load architecture versions.');
       setVersions([]);
       setRules([]);
-      setAuditEvents([]);
       setSelectedVersionId('');
     } finally {
       setIsLoadingVersions(false);
@@ -159,12 +157,11 @@ export default function RuleEditorPage() {
     setErrorMessage(null);
 
     try {
-      const [data, events] = await Promise.all([
+      const [data] = await Promise.all([
         listRules(versionId),
-        getAuditEvents(1, 12),
+        reloadAuditEvents(),
       ]);
       setRules(data);
-      setAuditEvents(events);
       setCurrentPage(1);
       setDrafts(
         data.reduce<Record<string, RuleEditorDraft>>((acc, rule) => {
@@ -176,7 +173,6 @@ export default function RuleEditorPage() {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load rules.');
       setRules([]);
       setDrafts({});
-      setAuditEvents([]);
     } finally {
       setIsLoadingRules(false);
     }
@@ -630,9 +626,15 @@ export default function RuleEditorPage() {
                 {drilldownEvents.length > 0 ? (
                   <ul className="mt-4 space-y-2">
                     {drilldownEvents.slice(0, 5).map((event) => (
-                      <li key={event.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300">
-                        <span className="text-white">{event.action}</span> on {event.entity_type}
-                        {event.new_value?.rule_text ? `: ${String(event.new_value.rule_text)}` : ''}
+                      <li key={event.id}>
+                        <GovernanceActivityRow
+                          event={event}
+                          summary={`${summarizeAuditEvent(event)}${event.new_value?.rule_text ? ` Rule text: ${String(event.new_value.rule_text)}` : ''}`}
+                          sessionUser={sessionUser}
+                          membersById={organizationMembersById}
+                          tone="dark"
+                          className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300"
+                        />
                       </li>
                     ))}
                   </ul>

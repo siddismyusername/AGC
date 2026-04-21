@@ -22,8 +22,11 @@ from app.schemas.document import (
     DocumentProcessingRequest,
     DocumentStatusUpdateRequest,
 )
-from app.services import document_extraction
+from app.services import document_extraction, document_intake, document_ocr
+from app.services.extractor_diagnostics_history import append_extractor_history
 from app.tasks.document_tasks import enqueue_document_processing
+
+from app.api.v1.endpoints.analytics import _get_latest_replay_timestamp, _raise_if_replay_rate_limited
 
 router = APIRouter(tags=["Documents"])
 
@@ -49,6 +52,19 @@ async def upload_document(
 
     contents = await file.read()
     storage_key = f"projects/{project_id}/documents/{uuid4()}-{file.filename}"
+    ocr_metadata = await document_ocr.extract_ocr_metadata(
+        file_name=file.filename or "uploaded-file",
+        file_type=file_type,
+        content_type=file.content_type,
+        contents=contents,
+    )
+    upload_intake = document_intake.build_upload_intake(
+        file_name=file.filename or "uploaded-file",
+        file_type=file_type,
+        content_type=file.content_type,
+        contents=contents,
+        ocr_metadata=ocr_metadata,
+    )
     document = UploadedDocument(
         project_id=project_id,
         file_name=file.filename or "uploaded-file",
@@ -58,6 +74,7 @@ async def upload_document(
         content_type=file.content_type or "application/octet-stream",
         storage_key=storage_key,
         processing_status="pending",
+        extracted_data={"upload_intake": upload_intake},
         created_by=user.id,
     )
     db.add(document)
@@ -220,6 +237,11 @@ async def replay_document_from_dead_letter(
             detail={"code": "INVALID_STATE", "message": "Only failed documents can be replayed"},
         )
 
+    project_documents = (
+        await db.execute(select(UploadedDocument).where(UploadedDocument.project_id == project_id))
+    ).scalars().all()
+    _raise_if_replay_rate_limited(_get_latest_replay_timestamp(project_documents))
+
     extraction_data = dict(document.extracted_data) if isinstance(document.extracted_data, dict) else {}
     error_meta = extraction_data.get("error") if isinstance(extraction_data.get("error"), dict) else {}
     retryable = bool(error_meta.get("retryable"))
@@ -248,6 +270,21 @@ async def replay_document_from_dead_letter(
         "queued_at": replay_requested_at,
         "replay": True,
     }
+    extraction_data = append_extractor_history(
+        extraction_data,
+        {
+            "event": "replay_queued",
+            "trigger": "document-replay-api",
+            "processing_status": "processing",
+            "queue_backend": queue_backend,
+            "task_id": task_id,
+            "request_id": None,
+            "key_slot": None,
+            "provider_attempts": None,
+            "error_code": error_meta.get("code") if isinstance(error_meta, dict) else None,
+            "retryable": retryable,
+        },
+    )
     extraction_data["dead_letter"] = {
         **dead_letter_meta,
         "retryable": retryable,
@@ -402,6 +439,21 @@ async def process_document(
             "status": "queued",
             "queued_at": queued_at,
         }
+        extraction_data = append_extractor_history(
+            extraction_data,
+            {
+                "event": "processing_queued",
+                "trigger": "document-process-api",
+                "processing_status": "processing",
+                "queue_backend": queue_backend,
+                "task_id": task_id,
+                "request_id": None,
+                "key_slot": None,
+                "provider_attempts": None,
+                "error_code": None,
+                "retryable": None,
+            },
+        )
         document.extracted_data = extraction_data
         document.updated_at = datetime.now(timezone.utc)
         await db.commit()
@@ -465,6 +517,10 @@ async def get_document_job_status(
         "key_slot": provider_meta.get("key_slot") or error_details.get("key_slot"),
         "error_code": error_meta.get("code"),
     }
+    diagnostics_history_raw = extracted_data.get("extractor_diagnostics_history") if isinstance(extracted_data, dict) else None
+    diagnostics_history = [
+        item for item in diagnostics_history_raw if isinstance(item, dict)
+    ] if isinstance(diagnostics_history_raw, list) else []
 
     return APIResponse(
         data={
@@ -473,6 +529,7 @@ async def get_document_job_status(
             "job": job_meta,
             "runtime_state": runtime_state,
             "extractor_diagnostics": extractor_diagnostics,
+            "extractor_diagnostics_history": diagnostics_history,
             "updated_at": document.updated_at.isoformat() if document.updated_at else None,
         },
         meta=_meta(),

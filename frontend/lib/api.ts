@@ -72,6 +72,14 @@ export type ProjectOut = {
   updated_at: string;
 };
 
+export type ProjectCreatePayload = {
+  name: string;
+  description?: string | null;
+  repository_url?: string | null;
+  default_branch?: string;
+  language?: string;
+};
+
 export type HealthScoreOut = {
   health_score: number;
   total_violations: number;
@@ -105,6 +113,15 @@ export type OrganizationOut = {
   updated_at: string;
   members_count: number;
   projects_count: number;
+};
+
+export type OrganizationMemberOut = {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
 };
 
 export type OrganizationUpdatePayload = {
@@ -157,6 +174,27 @@ export type DocumentMetricsTrendOut = {
   points: DocumentMetricsTrendPointOut[];
 };
 
+export type AICandidateReviewTrendPointOut = {
+  bucket_start: string;
+  review_count: number;
+  reviewed_documents: number;
+  accepted_candidates: number;
+  rejected_candidates: number;
+  acceptance_rate_percent: number | null;
+};
+
+export type AICandidateReviewTrendOut = {
+  days: number;
+  project_id: string | null;
+  total_reviews: number;
+  reviewed_documents: number;
+  accepted_candidates: number;
+  rejected_candidates: number;
+  acceptance_rate_percent: number | null;
+  last_reviewed_at: string | null;
+  points: AICandidateReviewTrendPointOut[];
+};
+
 export type WorkerHealthOut = {
   queue_backend: string;
   redis_status: 'healthy' | 'unreachable';
@@ -177,6 +215,8 @@ export type WorkerOpsHintsOut = {
   worker_status: 'healthy' | 'degraded' | 'down';
   recommended_actions: string[];
   runbook_commands: WorkerOpsCommandOut[];
+  last_replay_requested_at: string | null;
+  last_replay_document_count: number;
   checked_at: string;
 };
 
@@ -278,6 +318,35 @@ export type DocumentOut = {
   updated_at: string;
 };
 
+export type ExtractorDiagnosticsHistoryEntry = {
+  timestamp: string;
+  event: string;
+  trigger?: string;
+  processing_status: DocumentOut['processing_status'];
+  queue_backend: string | null;
+  task_id: string | null;
+  request_id: string | null;
+  key_slot: string | null;
+  provider_attempts: number | null;
+  error_code: string | null;
+  retryable: boolean | null;
+};
+
+export type ExtractorDiagnosticsSummary = {
+  project_name: string;
+  document_name: string;
+  file_type: DocumentFileType;
+  processing_status: DocumentOut['processing_status'];
+  queue_backend: string | null;
+  request_id: string | null;
+  key_slot: string | null;
+  provider_attempts: number | null;
+  error_code: string | null;
+  retryable: boolean | null;
+  history: ExtractorDiagnosticsHistoryEntry[];
+  updated_at: string;
+};
+
 export type DocumentProcessResponse =
   | DocumentOut
   | {
@@ -309,6 +378,7 @@ export type DocumentJobStatusOut = {
     key_slot: string | null;
     error_code: string | null;
   };
+  extractor_diagnostics_history: ExtractorDiagnosticsHistoryEntry[];
   updated_at: string | null;
 };
 
@@ -342,6 +412,96 @@ export type WorkerReplayQueueOut = {
   queued_count: number;
   items: WorkerReplayQueueItemOut[];
   checked_at: string;
+};
+
+export type AIDocumentExtractionPayload = {
+  architecture_version_id: string;
+  auto_create_rules?: boolean;
+  persist_candidates?: boolean;
+};
+
+export type AIDocumentCandidateReviewPayload = {
+  architecture_version_id: string;
+  accepted_rule_indexes?: number[];
+  rejected_rule_indexes?: number[];
+  accepted_entity_indexes?: number[];
+  rejected_entity_indexes?: number[];
+  accepted_relationship_indexes?: number[];
+  rejected_relationship_indexes?: number[];
+  review_note?: string;
+};
+
+export type AIDocumentCandidateReviewOut = {
+  project_id: string;
+  document_id: string;
+  architecture_version_id: string;
+  reviewed_at: string;
+  reviewed_by: string;
+  accepted_rules_count: number;
+  rejected_rules_count: number;
+  accepted_entities_count: number;
+  rejected_entities_count: number;
+  accepted_relationships_count: number;
+  rejected_relationships_count: number;
+  review_history_count: number;
+};
+
+export type AIDiagramHintsApplyPayload = {
+  architecture_version_id: string;
+  persist_applied_metadata?: boolean;
+  review_note?: string;
+  selected_components?: string[];
+  selected_relationships?: Array<{
+    source: string;
+    target: string;
+    relation: string;
+  }>;
+};
+
+export type AIDiagramHintsApplyOut = {
+  project_id: string;
+  document_id: string;
+  architecture_version_id: string;
+  created_components_count: number;
+  created_relationships_count: number;
+  skipped_relationships_count: number;
+  component_name_to_uid: Record<string, string>;
+};
+
+export type AIDocumentRuleExtractionOut = {
+  summary: string;
+  keywords: string[];
+  extracted_rules: Array<{
+    rule_text: string;
+    rule_type: RuleOut['rule_type'];
+    source_component: string | null;
+    target_component: string | null;
+    severity: RuleOut['severity'];
+    confidence: number | null;
+    model_version: string | null;
+  }>;
+  entities: Array<{
+    text: string;
+    label: string;
+    start: number | null;
+    end: number | null;
+    confidence: number | null;
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    relation: string;
+    confidence: number | null;
+  }>;
+  processing_time_ms: number;
+  model_info: Record<string, unknown>;
+  created_rule_ids: string[];
+  architecture_version_id: string;
+  project_id: string;
+  document_id: string;
+  file_name: string;
+  file_type: string;
+  input_source_fields: string[];
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api/v1';
@@ -518,6 +678,14 @@ export async function getProjects(): Promise<ProjectListItem[]> {
   return response.data;
 }
 
+export async function createProject(payload: ProjectCreatePayload): Promise<ProjectOut> {
+  const response = await apiRequestWithAuth<ProjectOut>('/projects', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return response.data;
+}
+
 export async function getProject(projectId: string): Promise<ProjectOut> {
   const response = await apiRequestWithAuth<ProjectOut>(`/projects/${projectId}`);
   return response.data;
@@ -542,6 +710,11 @@ export async function getOrganization(): Promise<OrganizationOut> {
   return response.data;
 }
 
+export async function getOrganizationMembers(): Promise<OrganizationMemberOut[]> {
+  const response = await apiRequestWithAuth<OrganizationMemberOut[]>('/organizations/me/members');
+  return response.data;
+}
+
 export async function updateOrganization(payload: OrganizationUpdatePayload): Promise<OrganizationOut> {
   const response = await apiRequestWithAuth<OrganizationOut>('/organizations/me', {
     method: 'PATCH',
@@ -562,6 +735,15 @@ export async function getAnalyticsHistory(days = 14): Promise<AnalyticsHistoryOu
 
 export async function getDocumentMetricsTrend(days = 14): Promise<DocumentMetricsTrendOut> {
   const response = await apiRequestWithAuth<DocumentMetricsTrendOut>(`/analytics/documents/trends?days=${days}`);
+  return response.data;
+}
+
+export async function getAICandidateReviewTrend(days = 14, projectId?: string): Promise<AICandidateReviewTrendOut> {
+  const params = new URLSearchParams({ days: String(days) });
+  if (projectId) {
+    params.set('project_id', projectId);
+  }
+  const response = await apiRequestWithAuth<AICandidateReviewTrendOut>(`/analytics/ai-candidate-reviews?${params.toString()}`);
   return response.data;
 }
 
@@ -762,6 +944,51 @@ export async function replayRetryableDeadLetterBatch(projectId: string, limit = 
     {
       method: 'POST',
       body: JSON.stringify({ project_id: projectId, limit, allow_non_retryable: allowNonRetryable }),
+    },
+  );
+  return response.data;
+}
+
+export async function extractRulesFromDocument(
+  projectId: string,
+  docId: string,
+  payload: AIDocumentExtractionPayload,
+): Promise<AIDocumentRuleExtractionOut> {
+  const response = await apiRequestWithAuth<AIDocumentRuleExtractionOut>(
+    `/ai/projects/${projectId}/documents/${docId}/rules/extract`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+  return response.data;
+}
+
+export async function applyDiagramHintsFromDocument(
+  projectId: string,
+  docId: string,
+  payload: AIDiagramHintsApplyPayload,
+): Promise<AIDiagramHintsApplyOut> {
+  const response = await apiRequestWithAuth<AIDiagramHintsApplyOut>(
+    `/ai/projects/${projectId}/documents/${docId}/diagram-hints/apply`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+  return response.data;
+}
+
+export async function reviewDocumentAICandidates(
+  projectId: string,
+  docId: string,
+  payload: AIDocumentCandidateReviewPayload,
+): Promise<AIDocumentCandidateReviewOut> {
+  const response = await apiRequestWithAuth<AIDocumentCandidateReviewOut>(
+    `/ai/projects/${projectId}/documents/${docId}/candidates/review`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
     },
   );
   return response.data;

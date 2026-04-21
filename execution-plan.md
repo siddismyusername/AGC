@@ -2,7 +2,29 @@
 
 This plan tracks actual implementation progress against the PRD and defines the next high-quality execution slices.
 
-## Current Stage (April 18, 2026)
+## Current Stage (April 20, 2026)
+
+## Same-Day Completion Priority (April 21, 2026)
+
+P0 (must complete first):
+- Extraction provider production path: run trained model endpoint whenever configured; avoid accidental scaffold-only runs.
+- OCR production path: automatically use OCR HTTP endpoint when configured and keep deterministic fallback when not.
+- End-to-end contract integrity: preserve API response envelopes and diagnostics fields through extraction and review flows.
+- Regression confidence: lock provider auto-mode behavior with focused unit tests and run targeted backend suites.
+
+P1 (complete after P0):
+- CI/CD strictness hardening: ensure compliance-trigger paths and failure semantics are deterministic for pipeline consumers.
+- Dashboard governance parity: ensure acceptance/rejection trend, diagnostics history, and violation context remain fully wired.
+
+P2 (if time remains today):
+- Extended observability polish for replay/worker operations and runbook guidance.
+
+April 21 execution status update:
+- P0 extraction provider production path: completed (default provider now `auto`, prefers trained HTTP endpoint when configured, deterministic scaffold fallback).
+- P0 OCR production path: completed (default OCR provider now `auto`, prefers HTTP OCR when configured, deterministic disabled fallback).
+- P0 contract integrity: completed for extraction/review/job diagnostics payloads in targeted validation scope.
+- P0 regression confidence: completed for targeted suite (`21 passed`) after starting required infra (`postgres`, `neo4j`, `redis`).
+- P1/P2 items remain open.
 
 Completed:
 - Backend MVP is running with auth, projects, graph, compliance, and webhooks.
@@ -93,25 +115,60 @@ Completed in this run:
 - Refined document trend analytics with day-over-day deltas for uploaded/completed/failed/processing counts.
 - Added document success-rate and failure-rate percentages to trend points.
 - Updated dashboard trend panel to surface completion momentum and daily success-rate context.
+- Extracted document trend calculation into a reusable helper for contract-level validation.
+- Added focused trend contract tests for first-bucket zero deltas, percentage math, and null-percentage edge cases.
 - Added extractor diagnostics exposure in job observability API (`request_id`, `key_slot`, provider attempts, error code).
 - Added Documents UI diagnostics line for support troubleshooting (request trace, auth key slot, attempts, error code).
 - Added integration assertions ensuring diagnostics contract is always present on job status payload.
 - Added worker/queue replay action API: `POST /api/v1/analytics/worker-actions/replay-retryable`.
 - Added Documents UI dead-letter replay controls with per-item replay and bulk retryable replay action.
 - Extended backend smoke/integration coverage for worker replay action endpoint contract.
+- Added dashboard extractor diagnostics panel showing latest live request trace, auth key slot, attempts, and retryability.
+- Added worker replay cooldown rate limiting for bulk and single replay actions with 429 retry-after responses.
+- Added replay activity telemetry to worker ops hints and dashboard ops panel showing latest replay timestamp and document count.
 - All 5 backend tests passing with document status workflow coverage.
+- Added Phase 4 AI extraction endpoints for deterministic text-to-rule and text-to-entity analysis.
+- Added optional AI rule auto-create flow into architecture versions with backend integration coverage.
+- Added Phase 4 document-native AI extraction endpoints that analyze uploaded document context and persist ai_candidates metadata.
+- Added Documents UI AI Extract action with architecture version targeting and optional auto-rule creation.
+- Added upload intake parsing (fingerprint, format detection, and text preview extraction) so document AI extraction consumes content-derived metadata.
+- Added OCR provider scaffold (`disabled`/`http`) and OCR metadata persistence under `extracted_data.upload_intake`.
+- Extended document AI extraction input assembly to consume OCR previews when available.
+- Added diagram-structure hint extraction (`components` and `relationships`) from text/OCR previews in upload intake.
+- Extended document AI extraction input assembly to consume diagram hints for stronger rule/entity candidate generation.
+- Added diagram-hint apply endpoint to promote upload hints into intended graph components/relationships with document-level apply metadata tracking.
+- Added Documents UI "Apply Hints" action to call diagram-hint apply endpoint and surface inline apply-state metadata per document.
+- Added selective diagram-hint apply payload support (`selected_components`, `selected_relationships`) plus Documents review drawer for per-item approval before apply.
+- Added integration coverage for selective diagram-hint apply behavior.
+- Added persisted diagram review decisions (`accepted`/`rejected` hints + optional note) under `extracted_data.upload_intake.diagram_hint_reviews` and surfaced recent review history in Documents review drawer.
+- Added reviewer identity context in review history UI (shows current user as self and falls back to reviewer id snippet).
+- Added organization members directory endpoint (`GET /api/v1/organizations/me/members`) and Documents review-history identity resolution to show non-self reviewer name/email when available.
+- Added reviewer role/active-status badges in Documents review history entries for stronger governance context.
+- Reused shared reviewer identity/role/status chips across dashboard audit timeline rows and document-level activity summaries.
+- Added shared governance activity row component and reused it in dashboard recent activity plus rule-editor audit drill-down.
+- Added Documents activity timeline panel that reuses shared governance activity rows for current-view document audit events.
+- Consolidated duplicated session-user and organization-member loading into shared frontend governance context hook reused by dashboard, documents, and rules pages.
+- Consolidated audit-event loading into shared frontend hook (`use-audit-events`) and wired it across dashboard/documents/rules with contextual filtering and refresh.
+- Added durable `extractor_diagnostics_history` persistence across process/replay flows and exposed it in document job-status responses with integration assertions.
+- Surfaced extractor diagnostics history timelines in Documents job-state rows and Dashboard latest-trace panel.
+- Staged AI candidate review contract with new endpoint to persist accepted/rejected rule/entity/relationship decisions and review history on documents.
+- Wired Documents AI candidate review UI with accept/reject controls, reviewer notes, and persisted review-history rendering.
+- Stabilized Documents polling by coalescing in-flight reloads, merging duplicate poll loops, and reducing audit/dead-letter refresh churn during background job tracking.
+- Added Documents live-polling visibility controls with status indicator, cadence selector (off/2s/5s/10s), and manual refresh action.
+- Added frontend Create Project modal on Documents page so active projects can be created without Swagger.
+- Added AI candidate-review analytics endpoint plus dashboard/Documents accept-reject trend surfaces.
 
-Not started:
+In progress:
 - Document and image ingestion pipelines.
-- AI-assisted extraction and multimodal layers.
+- AI-assisted extraction and multimodal layers (initial text extraction slice implemented).
 - Advanced trend analytics and forecasting.
 
 ## Immediate Next Actions
 
-1. **Harden trend analytics contract tests** - Add focused assertions for first-bucket delta defaults and percentage math edges.
-2. **Expand extractor diagnostics panels** - Surface provider diagnostics in dashboard-level operational views.
-3. **Add worker action rate limiting** - Prevent accidental high-volume replay bursts per project.
-4. **Expose replay activity telemetry** - Show last bulk replay outcomes on dashboard operations panels.
+1. **Expand Phase 4 AI ingestion** - Add production OCR provider integration and durable diagram parser integration for richer multimodal ingestion.
+2. **Expand shared governance hook coverage** - Extend shared loading to include controlled polling/throttling primitives where practical.
+3. **Broaden document replay history** - Add durable project-level replay history if analytics depth becomes necessary.
+4. **Add candidate-review governance analytics** - Summarize AI review acceptance/rejection trends in dashboard activity and analytics.
 
 ## Quality Gates (Always-On)
 
@@ -230,11 +287,7 @@ Quality guardrails for 48-hour mode:
 - Diagram-to-graph reconstruction.
 
 ### Phase 5: Advanced Analytics
-- TImplement document processing status update workflow (pending → completed).
-2. Add document search and text extraction scaffolding for Phase 3 AI layer.
-3. Enhance dashboard with document upload summary card.
-4. Plan Phase 4 AI extraction integration (NLP/OCR hooks)
-1. Expand audit payload richness (diff details for rule/version updates) and validate dashboard rendering.
-2. Start document and image ingestion contracts (Phase 3 kickoff).
-3. Extend upload-contract scaffolding into document and image ingestion entry points.
-4. Add backend coverage for Phase 3 upload metadata flows.
+- Forecast architecture drift and compliance risk using longer-horizon trend models.
+- Add project-level replay analytics with durable history and operator drill-down.
+- Build extractor reliability dashboards for failure cohorts, retries, and recovery windows.
+- Expand governance activity analytics with richer slices by entity, severity, and reviewer role.

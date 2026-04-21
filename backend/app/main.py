@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import Settings
+from app.core.database import engine
 from app.core.neo4j import Neo4jConnection
 
 settings = Settings()  # type: ignore[call-arg]
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ─────────────────────────────────────────────
     logger.info("Shutting down …")
+    await engine.dispose()
     await Neo4jConnection.close()
     logger.info("Neo4j connection closed.")
 

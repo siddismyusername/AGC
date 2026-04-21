@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.document import UploadedDocument
+from app.services.extractor_diagnostics_history import append_extractor_history
 
 
 class ExtractorError(RuntimeError):
@@ -357,9 +358,13 @@ class HttpExtractionProvider(ExtractionProvider):
 
 def _resolve_provider() -> ExtractionProvider:
     provider_name = settings.DOCUMENT_EXTRACTOR_PROVIDER.lower().strip()
+    if provider_name in {"", "auto"}:
+        if settings.DOCUMENT_EXTRACTOR_HTTP_URL:
+            return HttpExtractionProvider()
+        return ScaffoldedExtractionProvider()
     if provider_name in {"scaffolded", "mock", "local"}:
         return ScaffoldedExtractionProvider()
-    if provider_name == "http":
+    if provider_name in {"http", "trained", "model"}:
         return HttpExtractionProvider()
     raise RuntimeError(f"Unsupported DOCUMENT_EXTRACTOR_PROVIDER: {settings.DOCUMENT_EXTRACTOR_PROVIDER}")
 
@@ -372,14 +377,31 @@ async def process_document_inline(db: AsyncSession, document: UploadedDocument) 
     try:
         provider = _resolve_provider()
         payload = await provider.extract(document)
+        merged_payload = dict(existing_data)
+        merged_payload.update(payload)
         if isinstance(existing_job, dict):
-            payload["job"] = {
+            merged_payload["job"] = {
                 **existing_job,
                 "status": "completed",
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
-        document.extracted_data = payload
+        provider_meta = merged_payload.get("provider") if isinstance(merged_payload.get("provider"), dict) else {}
+        merged_payload = append_extractor_history(
+            merged_payload,
+            {
+                "event": "processing_completed",
+                "processing_status": "completed",
+                "queue_backend": existing_job.get("queue_backend") if isinstance(existing_job, dict) else None,
+                "task_id": existing_job.get("task_id") if isinstance(existing_job, dict) else None,
+                "request_id": provider_meta.get("request_id"),
+                "key_slot": provider_meta.get("key_slot"),
+                "provider_attempts": provider_meta.get("attempts"),
+                "error_code": None,
+                "retryable": None,
+            },
+        )
+        document.extracted_data = merged_payload
         document.processing_status = "completed"
     except Exception as exc:  # pragma: no cover - defensive for future extractor errors
         extractor_error = _to_extractor_error(exc)
@@ -388,6 +410,7 @@ async def process_document_inline(db: AsyncSession, document: UploadedDocument) 
         existing_dead_letter = existing_data.get("dead_letter") if isinstance(existing_data, dict) else None
         replay_count = int(existing_dead_letter.get("replay_count", 0) or 0) if isinstance(existing_dead_letter, dict) else 0
         failed_payload = {
+            **existing_data,
             "source": "document-extractor",
             "error": {
                 "code": extractor_error.code,
@@ -410,6 +433,20 @@ async def process_document_inline(db: AsyncSession, document: UploadedDocument) 
                 "failed_at": failure_timestamp,
                 "retry_hint": "reprocess" if extractor_error.retryable else "inspect-extractor-config",
             }
+        failed_payload = append_extractor_history(
+            failed_payload,
+            {
+                "event": "processing_failed",
+                "processing_status": "failed",
+                "queue_backend": existing_job.get("queue_backend") if isinstance(existing_job, dict) else None,
+                "task_id": existing_job.get("task_id") if isinstance(existing_job, dict) else None,
+                "request_id": extractor_error.details.get("request_id") if isinstance(extractor_error.details, dict) else None,
+                "key_slot": extractor_error.details.get("key_slot") if isinstance(extractor_error.details, dict) else None,
+                "provider_attempts": extractor_error.details.get("attempt") if isinstance(extractor_error.details, dict) else None,
+                "error_code": extractor_error.code,
+                "retryable": extractor_error.retryable,
+            },
+        )
         document.extracted_data = failed_payload
     document.updated_at = datetime.now(timezone.utc)
     await db.commit()

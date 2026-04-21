@@ -249,3 +249,19 @@ async def test_http_provider_supports_custom_api_key_header(monkeypatch):
 	assert payload["summary"] == "Done"
 	assert client.calls[0]["headers"]["x-api-key"] == "raw-key"
 	assert "Authorization" not in client.calls[0]["headers"]
+
+
+def test_resolve_provider_auto_uses_http_when_configured(monkeypatch):
+	monkeypatch.setattr(document_extraction.settings, "DOCUMENT_EXTRACTOR_PROVIDER", "auto")
+	monkeypatch.setattr(document_extraction.settings, "DOCUMENT_EXTRACTOR_HTTP_URL", "https://extractor.local")
+
+	provider = document_extraction._resolve_provider()
+	assert isinstance(provider, document_extraction.HttpExtractionProvider)
+
+
+def test_resolve_provider_auto_falls_back_to_scaffold_when_http_missing(monkeypatch):
+	monkeypatch.setattr(document_extraction.settings, "DOCUMENT_EXTRACTOR_PROVIDER", "auto")
+	monkeypatch.setattr(document_extraction.settings, "DOCUMENT_EXTRACTOR_HTTP_URL", None)
+
+	provider = document_extraction._resolve_provider()
+	assert isinstance(provider, document_extraction.ScaffoldedExtractionProvider)

@@ -58,6 +58,13 @@ def test_organization_me_endpoints_require_and_return_auth_context():
     assert org_data["name"].startswith("Org ")
     assert org_data["members_count"] == 1
 
+    members_response = client.get("/api/v1/organizations/me/members", headers=headers)
+    assert members_response.status_code == 200
+    members = members_response.json()["data"]
+    assert len(members) == 1
+    assert members[0]["email"].startswith("owner-")
+    assert members[0]["full_name"] == "Org Owner"
+
     patch_response = client.patch(
       "/api/v1/organizations/me",
       headers=headers,
@@ -349,6 +356,11 @@ def test_organization_me_endpoints_require_and_return_auth_context():
     assert "request_id" in diagnostics
     assert "key_slot" in diagnostics
     assert "error_code" in diagnostics
+    diagnostics_history = job_status_data["extractor_diagnostics_history"]
+    assert isinstance(diagnostics_history, list)
+    assert len(diagnostics_history) >= 1
+    assert diagnostics_history[-1]["event"] == "processing_queued"
+    assert diagnostics_history[-1]["trigger"] == "document-process-api"
 
     failed_document_upload = client.post(
       f"/api/v1/projects/{graph_project_id}/documents/upload",
@@ -412,17 +424,33 @@ def test_organization_me_endpoints_require_and_return_auth_context():
     assert replay_payload["replay_count"] == 1
     assert replay_payload["queue_backend"] in {"celery", "fastapi-background"}
 
+    replayed_document_details = client.get(
+      f"/api/v1/projects/{graph_project_id}/documents/{failed_document_id}",
+      headers=headers,
+    )
+    assert replayed_document_details.status_code == 200
+    replay_history = replayed_document_details.json()["data"]["extracted_data"].get("extractor_diagnostics_history")
+    assert isinstance(replay_history, list)
+    assert len(replay_history) >= 1
+    assert replay_history[-1]["event"] == "replay_queued"
+    assert replay_history[-1]["trigger"] == "document-replay-api"
+
+    replay_worker_ops = client.get("/api/v1/analytics/worker-ops", headers=headers)
+    assert replay_worker_ops.status_code == 200
+    replay_worker_ops_data = replay_worker_ops.json()["data"]
+    assert replay_worker_ops_data["last_replay_requested_at"] is not None
+    assert replay_worker_ops_data["last_replay_document_count"] >= 1
+
     bulk_replay_action = client.post(
       "/api/v1/analytics/worker-actions/replay-retryable",
       headers=headers,
       json={"project_id": graph_project_id, "limit": 20, "allow_non_retryable": False},
     )
-    assert bulk_replay_action.status_code == 200
-    bulk_payload = bulk_replay_action.json()["data"]
-    assert bulk_payload["project_id"] == graph_project_id
-    assert bulk_payload["requested_limit"] == 20
-    assert "queued_count" in bulk_payload
-    assert isinstance(bulk_payload["items"], list)
+    assert bulk_replay_action.status_code == 429
+    bulk_error = bulk_replay_action.json()["detail"]
+    assert bulk_error["code"] == "RATE_LIMITED"
+    assert bulk_error["retry_after_seconds"] >= 1
+    assert "next_available_at" in bulk_error
 
     list_documents = client.get(f"/api/v1/projects/{graph_project_id}/documents", headers=headers)
     assert list_documents.status_code == 200

@@ -15,7 +15,7 @@ from app.core.responses import APIResponse, ResponseMeta
 from app.models.organization import Organization
 from app.models.project import Project
 from app.models.user import User
-from app.schemas.organization import OrganizationOut, OrganizationUpdate
+from app.schemas.organization import OrganizationMemberOut, OrganizationOut, OrganizationUpdate
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -100,4 +100,20 @@ async def update_my_organization(
         or 0
     )
 
+    return APIResponse(data=payload, meta=_meta())
+
+
+@router.get("/me/members")
+async def list_my_organization_members(
+    user: User = Depends(require_roles("admin", "architect")),
+    db: AsyncSession = Depends(get_db),
+):
+    members = (
+        await db.execute(
+            select(User)
+            .where(User.organization_id == user.organization_id)
+            .order_by(User.created_at.asc())
+        )
+    ).scalars().all()
+    payload = [OrganizationMemberOut.model_validate(member).model_dump() for member in members]
     return APIResponse(data=payload, meta=_meta())

@@ -51,6 +51,27 @@ class DocumentMetricsTrendOut(BaseModel):
     points: list[DocumentMetricsTrendPointOut]
 
 
+class AICandidateReviewTrendPointOut(BaseModel):
+    bucket_start: datetime
+    review_count: int
+    reviewed_documents: int
+    accepted_candidates: int
+    rejected_candidates: int
+    acceptance_rate_percent: float | None
+
+
+class AICandidateReviewTrendOut(BaseModel):
+    days: int
+    project_id: UUID | None = None
+    total_reviews: int
+    reviewed_documents: int
+    accepted_candidates: int
+    rejected_candidates: int
+    acceptance_rate_percent: float | None
+    last_reviewed_at: datetime | None
+    points: list[AICandidateReviewTrendPointOut]
+
+
 class WorkerHealthOut(BaseModel):
     queue_backend: str
     redis_status: str
@@ -71,6 +92,8 @@ class WorkerOpsHintsOut(BaseModel):
     worker_status: str
     recommended_actions: list[str]
     runbook_commands: list[WorkerOpsCommandOut]
+    last_replay_requested_at: datetime | None
+    last_replay_document_count: int
     checked_at: datetime
 
 

@@ -31,9 +31,17 @@ def test_openapi_exposes_versioned_api_routes():
     assert "/api/v1/projects/{project_id}/documents/{doc_id}/process" in paths
     assert "/api/v1/projects/{project_id}/documents/{doc_id}/job" in paths
     assert "/api/v1/projects/{project_id}/documents/{doc_id}/replay" in paths
+    assert "/api/v1/ai/rules/extract" in paths
+    assert "/api/v1/ai/ner/extract" in paths
+    assert "/api/v1/ai/projects/{project_id}/documents/{doc_id}/rules/extract" in paths
+    assert "/api/v1/ai/projects/{project_id}/documents/{doc_id}/ner/extract" in paths
+    assert "/api/v1/ai/projects/{project_id}/documents/{doc_id}/diagram-hints/apply" in paths
+    assert "/api/v1/ai/projects/{project_id}/documents/{doc_id}/candidates/review" in paths
     assert "/api/v1/organizations/me" in paths
+    assert "/api/v1/organizations/me/members" in paths
     assert "/api/v1/analytics/summary" in paths
     assert "/api/v1/analytics/history" in paths
+    assert "/api/v1/analytics/ai-candidate-reviews" in paths
     assert "/api/v1/analytics/worker-health" in paths
     assert "/api/v1/analytics/worker-ops" in paths
     assert "/api/v1/analytics/worker-actions/replay-retryable" in paths
