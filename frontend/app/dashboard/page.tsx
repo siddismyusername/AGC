@@ -7,6 +7,7 @@ import GovernanceActivityRow, { summarizeAuditEvent } from '../../components/gov
 import {
   AICandidateReviewTrendOut,
   AnalyticsHistoryPointOut,
+  ComplianceReportOut,
   DocumentOut,
   DocumentMetricsTrendPointOut,
   ExtractorDiagnosticsHistoryEntry,
@@ -15,6 +16,8 @@ import {
   getAnalyticsHistory,
   getDocumentMetricsTrend,
   getAnalyticsSummary,
+  listComplianceReportViolations,
+  listComplianceReports,
   listDocuments,
   getProject,
   getProjectHealth,
@@ -161,6 +164,17 @@ export default function DashboardPage() {
   const [workerOpsHints, setWorkerOpsHints] = useState<WorkerOpsHintsOut | null>(null);
   const [extractorDiagnostics, setExtractorDiagnostics] = useState<ExtractorDiagnosticsSummary | null>(null);
   const [aiReviewAnalytics, setAiReviewAnalytics] = useState<AICandidateReviewTrendOut | null>(null);
+  const [complianceContext, setComplianceContext] = useState<{
+    project_name: string;
+    report: ComplianceReportOut;
+    violations: Array<{
+      violation_type: string;
+      severity: string;
+      source_component: string;
+      target_component: string | null;
+      description: string;
+    }>;
+  } | null>(null);
   const { auditEvents: activityFeed } = useAuditEvents(1, 8);
   const { sessionUser, organizationMembersById } = useGovernanceContext();
 
@@ -187,6 +201,28 @@ export default function DashboardPage() {
             project,
             health: await getProjectHealth(project.id),
           })),
+        );
+
+        const complianceEntries = await Promise.all(
+          topActiveProjects.map(async (project) => {
+            const reports = await listComplianceReports(project.id, 1, 1);
+            if (reports.length === 0) {
+              return null;
+            }
+            const report = reports[0];
+            const violations = await listComplianceReportViolations(project.id, report.id, 1, 3);
+            return {
+              project_name: project.name,
+              report,
+              violations: violations.map((violation) => ({
+                violation_type: violation.violation_type,
+                severity: violation.severity,
+                source_component: violation.source_component,
+                target_component: violation.target_component,
+                description: violation.description,
+              })),
+            };
+          }),
         );
 
         const topProjects = healthEntries.slice(0, 3);
@@ -251,6 +287,11 @@ export default function DashboardPage() {
           .filter((item): item is ExtractorDiagnosticsSummary => item !== null)
           .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())[0] ?? null;
         setExtractorDiagnostics(latestDiagnostics);
+
+        const latestComplianceContext = complianceEntries
+          .filter((item): item is NonNullable<typeof item> => item !== null)
+          .sort((left, right) => new Date(right.report.created_at).getTime() - new Date(left.report.created_at).getTime())[0] ?? null;
+        setComplianceContext(latestComplianceContext);
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Failed to load dashboard data');
         setProjectCards(fallbackProjectCards);
@@ -261,6 +302,7 @@ export default function DashboardPage() {
         setDocumentTrendPoints([]);
         setExtractorDiagnostics(null);
         setAiReviewAnalytics(null);
+        setComplianceContext(null);
       } finally {
         setIsLoading(false);
       }
@@ -558,6 +600,46 @@ export default function DashboardPage() {
               ) : (
                 <p className="mt-4 text-sm leading-6 text-slate-300">
                   No extractor diagnostics are available yet. Process or fail a document to populate this view.
+                </p>
+              )}
+            </article>
+
+            <article className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6">
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl bg-rose-400/10 p-3 text-rose-200">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm uppercase tracking-[0.3em] text-white/45">Violation context</p>
+                  <h2 className="mt-1 text-xl font-semibold text-white">Latest compliance report</h2>
+                </div>
+              </div>
+
+              {complianceContext ? (
+                <div className="mt-4 space-y-2 text-sm text-slate-300">
+                  <p>Project: {complianceContext.project_name}</p>
+                  <p>Status: {complianceContext.report.status}</p>
+                  <p>Health score: {complianceContext.report.health_score !== null ? complianceContext.report.health_score.toFixed(1) : 'n/a'}</p>
+                  <p>Total violations: {complianceContext.report.total_violations}</p>
+                  <div className="mt-3 space-y-2">
+                    {complianceContext.violations.length > 0 ? complianceContext.violations.map((violation) => (
+                      <div key={`${violation.violation_type}-${violation.source_component}`} className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs">
+                        <p className="font-semibold text-rose-200">{violation.violation_type} • {violation.severity}</p>
+                        <p className="mt-1 text-slate-300">
+                          {violation.source_component}{violation.target_component ? ` → ${violation.target_component}` : ''}
+                        </p>
+                        <p className="mt-1 text-slate-400">{violation.description}</p>
+                      </div>
+                    )) : (
+                      <p className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-400">
+                        No violations recorded on the latest report.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm leading-6 text-slate-300">
+                  No compliance reports available yet. Run a compliance check to populate this context.
                 </p>
               )}
             </article>

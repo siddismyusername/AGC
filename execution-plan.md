@@ -24,7 +24,8 @@ April 21 execution status update:
 - P0 OCR production path: completed (default OCR provider now `auto`, prefers HTTP OCR when configured, deterministic disabled fallback).
 - P0 contract integrity: completed for extraction/review/job diagnostics payloads in targeted validation scope.
 - P0 regression confidence: completed for targeted suite (`21 passed`) after starting required infra (`postgres`, `neo4j`, `redis`).
-- P1/P2 items remain open.
+- P1 completed: CI/CD webhook strictness and dashboard governance parity are wired and contract-validated.
+- P2 completed: replay/worker observability and runbook guidance are wired and validated through backend integration coverage.
 
 Completed:
 - Backend MVP is running with auth, projects, graph, compliance, and webhooks.

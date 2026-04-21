@@ -91,6 +91,41 @@ export type HealthScoreOut = {
   checked_at: string;
 };
 
+export type ComplianceReportOut = {
+  id: string;
+  project_id: string;
+  architecture_version_id: string;
+  commit_hash: string | null;
+  branch: string | null;
+  trigger: string;
+  status: string;
+  health_score: number | null;
+  total_violations: number;
+  critical_count: number;
+  major_count: number;
+  minor_count: number;
+  execution_time_ms: number | null;
+  summary: Record<string, unknown> | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type ViolationOut = {
+  id: string;
+  compliance_report_id: string;
+  rule_id: string | null;
+  violation_type: string;
+  severity: string;
+  source_component: string;
+  target_component: string | null;
+  source_file: string | null;
+  source_line: number | null;
+  description: string;
+  suggestion: string | null;
+  created_at: string;
+};
+
 export type AuditEvent = {
   id: string;
   action: string;
@@ -698,6 +733,23 @@ export async function getProjectHealth(projectId: string): Promise<HealthScoreOu
   } catch {
     return null;
   }
+}
+
+export async function listComplianceReports(projectId: string, page = 1, pageSize = 1): Promise<ComplianceReportOut[]> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  const response = await apiRequestWithAuth<ComplianceReportOut[]>(`/projects/${projectId}/compliance/reports?${params.toString()}`);
+  return response.data;
+}
+
+export async function listComplianceReportViolations(
+  projectId: string,
+  reportId: string,
+  page = 1,
+  pageSize = 3,
+): Promise<ViolationOut[]> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  const response = await apiRequestWithAuth<ViolationOut[]>(`/projects/${projectId}/compliance/reports/${reportId}/violations?${params.toString()}`);
+  return response.data;
 }
 
 export async function getAuditEvents(page = 1, perPage = 8): Promise<AuditEvent[]> {
