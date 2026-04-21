@@ -10,11 +10,13 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
+from neo4j import AsyncSession as Neo4jSession
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_roles
+from app.core.neo4j import Neo4jConnection
 from app.core.responses import APIResponse, ResponseMeta
 from app.core.security import hash_password
 from app.models.compliance import CiCdToken, Pipeline
@@ -238,6 +240,7 @@ def _extract_gitlab_context(event_name: str | None, payload: dict) -> tuple[str,
 async def _execute_pipeline_compliance(
     *,
     db: AsyncSession,
+    neo4j_session: Neo4jSession,
     pipeline: Pipeline,
     commit_hash: str,
     branch: str,
@@ -257,7 +260,7 @@ async def _execute_pipeline_compliance(
 
     report = await run_compliance_check(
         db=db,
-        neo4j_session=await anext(Neo4jConnection.get_session()),
+        neo4j_session=neo4j_session,
         project_id=pipeline.project_id,
         architecture_version_id=active_version.id,
         commit_hash=commit_hash,
@@ -286,6 +289,7 @@ async def github_webhook(
     x_hub_signature_256: Optional[str] = Header(None),
     x_github_event: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
+    neo4j_session: Neo4jSession = Depends(Neo4jConnection.get_session),
 ):
     """Receive GitHub Actions webhook events and trigger compliance checks."""
     q = select(Pipeline).where(Pipeline.id == pipeline_id, Pipeline.is_active == True)
@@ -341,6 +345,7 @@ async def github_webhook(
     commit, branch = context
     compliance_result = await _execute_pipeline_compliance(
         db=db,
+        neo4j_session=neo4j_session,
         pipeline=pipeline,
         commit_hash=commit,
         branch=branch,
@@ -366,6 +371,7 @@ async def gitlab_webhook(
     x_gitlab_token: Optional[str] = Header(None),
     x_gitlab_event: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
+    neo4j_session: Neo4jSession = Depends(Neo4jConnection.get_session),
 ):
     """Receive GitLab CI webhook events and trigger compliance checks."""
     q = select(Pipeline).where(Pipeline.id == pipeline_id, Pipeline.is_active == True)
@@ -417,6 +423,7 @@ async def gitlab_webhook(
     commit, branch = context
     compliance_result = await _execute_pipeline_compliance(
         db=db,
+        neo4j_session=neo4j_session,
         pipeline=pipeline,
         commit_hash=commit,
         branch=branch,
