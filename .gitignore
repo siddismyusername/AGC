@@ -23,3 +23,5 @@ out/
 Thumbs.db
 .vscode/
 .idea/
+
+/model-data
