@@ -79,7 +79,7 @@ async def extract_rules(
     db: AsyncSession = Depends(get_db),
 ):
     version = await _resolve_owned_architecture_version(db, version_id=body.architecture_version_id, user=user)
-    analysis = ai_extraction.analyze_text(body.text)
+    analysis = await ai_extraction.analyze_text(body.text)
     created_rule_ids: list[UUID] = []
 
     if body.auto_create_rules and user.role not in {"admin", "architect"}:
@@ -244,7 +244,7 @@ async def extract_rules_from_document(
             detail={"code": "UNPROCESSABLE_ENTITY", "message": "Document does not have enough metadata for AI extraction"},
         )
 
-    analysis = ai_extraction.analyze_text(document_input)
+    analysis = await ai_extraction.analyze_text(document_input)
     created_rule_ids: list[UUID] = []
 
     if body.auto_create_rules and user.role not in {"admin", "architect"}:
@@ -346,7 +346,7 @@ async def extract_entities_from_document(
             detail={"code": "UNPROCESSABLE_ENTITY", "message": "Document does not have enough metadata for AI extraction"},
         )
 
-    analysis = ai_extraction.analyze_text(document_input)
+    analysis = await ai_extraction.analyze_text(document_input)
     payload = AIDocumentNerExtractionOut(
         summary=analysis["summary"],
         entities=[AIEntityCandidateOut.model_validate(entity) for entity in analysis["entity_candidates"]],
@@ -821,7 +821,7 @@ async def extract_entities(
     db: AsyncSession = Depends(get_db),
 ):
     version = await _resolve_owned_architecture_version(db, version_id=body.architecture_version_id, user=user)
-    analysis = ai_extraction.analyze_text(body.text)
+    analysis = await ai_extraction.analyze_text(body.text)
     payload = AINerExtractionOut(
         summary=analysis["summary"],
         entities=[AIEntityCandidateOut.model_validate(entity) for entity in analysis["entity_candidates"]],

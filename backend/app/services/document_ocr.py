@@ -1,83 +1,112 @@
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any
+from pydantic import BaseModel, Field
 
-import httpx
+import ollama
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 
+# ── Pydantic Schemas for Structured Output ──
 
-def _auth_headers() -> dict[str, str]:
-    headers: dict[str, str] = {}
-    if settings.DOCUMENT_OCR_HTTP_API_KEY:
-        header_name = settings.DOCUMENT_OCR_HTTP_API_KEY_HEADER.strip() or "Authorization"
-        scheme = settings.DOCUMENT_OCR_HTTP_API_KEY_SCHEME.strip()
-        if header_name.lower() == "authorization":
-            header_value = f"{scheme} {settings.DOCUMENT_OCR_HTTP_API_KEY}".strip() if scheme else settings.DOCUMENT_OCR_HTTP_API_KEY
-        else:
-            header_value = settings.DOCUMENT_OCR_HTTP_API_KEY
-        headers[header_name] = header_value
-    return headers
+class DiagramComponentCandidate(BaseModel):
+    label: str
+    component_type: str
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+class DiagramRelationshipCandidate(BaseModel):
+    source: str
+    target: str
+    relation_type: str
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+class DiagramExtractionResult(BaseModel):
+    text_preview: str = Field(description="A brief description of what the diagram contains.")
+    detected_components: list[DiagramComponentCandidate]
+    detected_relationships: list[DiagramRelationshipCandidate]
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
-async def _extract_with_http(
-    *,
-    file_name: str,
-    file_type: str,
-    content_type: str | None,
-    contents: bytes,
-) -> dict[str, Any] | None:
-    if not settings.DOCUMENT_OCR_HTTP_URL:
-        return None
+_VISION_PROMPT = """You are an expert architecture diagram analyzer. 
+Analyze this system architecture diagram and extract:
+1. A brief text_preview describing the architecture pattern.
+2. The architectural components (detected_components) with their labels and types (e.g. Database, API, Service).
+3. The relationships/connections between them (detected_relationships) and the relation_type (e.g. reads_from, writes_to, calls).
+Return strictly matching the requested JSON schema.
+"""
 
-    clipped = contents[: max(0, int(settings.DOCUMENT_OCR_HTTP_MAX_BYTES))]
-    encoded = base64.b64encode(clipped).decode("ascii")
-    payload = {
-        "file_name": file_name,
-        "file_type": file_type,
-        "content_type": content_type,
-        "size_bytes": len(contents),
-        "content_base64": encoded,
-    }
-
-    headers = {
-        "Content-Type": "application/json",
-        **_auth_headers(),
-    }
-
+async def _extract_with_ollama(contents: bytes) -> dict[str, Any] | None:
     try:
-        async with httpx.AsyncClient(timeout=settings.DOCUMENT_OCR_HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.post(settings.DOCUMENT_OCR_HTTP_URL, json=payload, headers=headers)
-    except httpx.HTTPError:
+        client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
+        encoded_image = base64.b64encode(contents).decode("ascii")
+        
+        response = await client.chat(
+            model=settings.OLLAMA_VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": _VISION_PROMPT,
+                    "images": [encoded_image]
+                }
+            ],
+            format=DiagramExtractionResult.model_json_schema()
+        )
+        
+        result_json = json.loads(response.message.content)
+        parsed_result = DiagramExtractionResult.model_validate(result_json)
+        
+        return {
+            "provider": "ollama-qwen-vl",
+            "model": settings.OLLAMA_VISION_MODEL,
+            "text_preview": parsed_result.text_preview[: int(settings.DOCUMENT_OCR_TEXT_PREVIEW_LIMIT)],
+            "detected_components": [c.model_dump() for c in parsed_result.detected_components],
+            "detected_relationships": [r.model_dump() for r in parsed_result.detected_relationships],
+            "confidence": parsed_result.confidence or 0.8,
+        }
+    except Exception as e:
+        # Fallthrough to None so Gemini can try
+        import logging
+        logging.getLogger("archguard").warning(f"Ollama Vision failed: {str(e)}")
         return None
 
-    if response.status_code >= 400:
+async def _extract_with_gemini(contents: bytes, mime_type: str) -> dict[str, Any] | None:
+    if not settings.GEMINI_API_KEY:
         return None
-
+        
     try:
-        data = response.json()
-    except ValueError:
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[
+                types.Part.from_bytes(data=contents, mime_type=mime_type),
+                _VISION_PROMPT,
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=DiagramExtractionResult,
+            ),
+        )
+        
+        result_json = json.loads(response.text)
+        parsed_result = DiagramExtractionResult.model_validate(result_json)
+        
+        return {
+            "provider": "gemini-flash-fallback",
+            "model": "gemini-1.5-flash",
+            "text_preview": parsed_result.text_preview[: int(settings.DOCUMENT_OCR_TEXT_PREVIEW_LIMIT)],
+            "detected_components": [c.model_dump() for c in parsed_result.detected_components],
+            "detected_relationships": [r.model_dump() for r in parsed_result.detected_relationships],
+            "confidence": parsed_result.confidence or 0.9,
+        }
+    except Exception as e:
+        import logging
+        logging.getLogger("archguard").error(f"Gemini Fallback Vision failed: {str(e)}")
         return None
-
-    if not isinstance(data, dict):
-        return None
-
-    text_preview = data.get("text_preview")
-    if not isinstance(text_preview, str) or not text_preview.strip():
-        return None
-
-    result: dict[str, Any] = {
-        "provider": "http-ocr",
-        "text_preview": text_preview.strip()[: int(settings.DOCUMENT_OCR_TEXT_PREVIEW_LIMIT)],
-    }
-    confidence = data.get("confidence")
-    if isinstance(confidence, (int, float)):
-        result["confidence"] = max(0.0, min(1.0, float(confidence)))
-    model = data.get("model")
-    if isinstance(model, str) and model.strip():
-        result["model"] = model.strip()
-    return result
 
 
 async def extract_ocr_metadata(
@@ -87,19 +116,21 @@ async def extract_ocr_metadata(
     content_type: str | None,
     contents: bytes,
 ) -> dict[str, Any] | None:
+    
     provider = settings.DOCUMENT_OCR_PROVIDER.lower().strip()
-    if provider in {"", "auto"}:
-        if settings.DOCUMENT_OCR_HTTP_URL:
-            provider = "http"
-        else:
-            provider = "disabled"
     if provider in {"disabled", "none", "off"}:
         return None
-    if provider in {"http", "trained", "model"}:
-        return await _extract_with_http(
-            file_name=file_name,
-            file_type=file_type,
-            content_type=content_type,
-            contents=contents,
-        )
+        
+    mime_type = content_type or "image/png"
+    
+    # 1. Try Local Ollama First
+    result = await _extract_with_ollama(contents)
+    if result:
+        return result
+        
+    # 2. Try Gemini Fallback
+    result = await _extract_with_gemini(contents, mime_type)
+    if result:
+        return result
+        
     return None

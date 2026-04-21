@@ -55,28 +55,35 @@ P2:
 
 ---
 
-## Next Actions
+## Startup Commands
 
-1. **Start Neo4j** before running backend:
-   ```bash
-   neo4j start
-   # or via docker:
-   docker run -p 7474:7474 -p 7687:7687 neo4j
-   ```
+### 1. Start Infrastructure (Docker)
+```bash
+docker compose up -d postgres neo4j redis
+```
 
-2. **Run migrations**:
-   ```bash
-   cd backend && alembic upgrade head
-   ```
+### 2. Run Database Migrations
+```bash
+cd backend
+alembic upgrade head
+```
 
-3. **Start services**:
-   - Backend: `uvicorn app.main:app`
-   - Frontend: `npm run dev` (in frontend/)
-   - Worker: `celery -A app.core.celery_app worker --pool=solo`
+### 3. Start Services (separate terminals)
 
----
+| Service | Command |
+|---------|---------|
+| Backend API | `uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload` |
+| Frontend | `cd frontend && npm run dev` |
+| Celery Worker | `celery -A app.core.celery_app worker --loglevel=info --pool=solo` |
 
-## Quality Gates
+### 4. Verify
+| Service | URL |
+|---------|-----|
+| Backend | http://127.0.0.1:8000/health |
+| Frontend | http://localhost:3000 |
+| Neo4j Browser | http://localhost:7474 |
+
+**Env file:** `backend/.env`
 
 1. No feature without error handling
 2. All APIs return standardized envelopes

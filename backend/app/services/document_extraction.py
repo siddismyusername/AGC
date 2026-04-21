@@ -215,158 +215,38 @@ class ExtractionProvider(ABC):
         raise NotImplementedError
 
 
-class ScaffoldedExtractionProvider(ExtractionProvider):
+class OllamaTextExtractionProvider(ExtractionProvider):
     async def extract(self, document: UploadedDocument) -> dict[str, Any]:
-        return _build_extracted_payload(document)
-
-
-class HttpExtractionProvider(ExtractionProvider):
-    async def extract(self, document: UploadedDocument) -> dict[str, Any]:
-        if not settings.DOCUMENT_EXTRACTOR_HTTP_URL:
-            raise ExtractorError(
-                "EXTRACTOR_CONFIG_MISSING",
-                "DOCUMENT_EXTRACTOR_HTTP_URL is required for http extractor provider",
-                retryable=False,
-            )
-
-        request_id = str(uuid4())
-        base_headers: dict[str, str] = {
-            "Content-Type": "application/json",
-            "X-Request-ID": request_id,
-            "X-ArchGuard-Document-ID": str(document.id),
-            "X-ArchGuard-Project-ID": str(document.project_id),
-            "Idempotency-Key": f"archguard-doc-{document.id}",
+        # Wait until the document content is fetched from storage.
+        # Since this file operates on the UploadedDocument metadata, we assume text
+        # was already loaded or this expects text from `document.description`.
+        # Real-world usage requires reading the file bytes, assuming description for now.
+        from app.services.ai_extraction import analyze_text
+        text_content = document.description or document.file_name
+        # Note: A true storage integration would read the S3/Local file here.
+        
+        result = await analyze_text(text_content)
+        
+        return {
+            "summary": result["summary"],
+            "keywords": result["keywords"],
+            "rule_candidates": result["rule_candidates"],
+            "entity_candidates": result["entity_candidates"],
+            "relationship_candidates": result["relationship_candidates"],
+            "source": "ollama-local-extractor",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "provider": {
+                "name": "ollama",
+                "model": settings.OLLAMA_TEXT_MODEL,
+                "attempts": 1,
+            },
         }
-
-        payload = {
-            "document_id": str(document.id),
-            "project_id": str(document.project_id),
-            "file_name": document.file_name,
-            "file_type": document.file_type,
-            "description": document.description,
-            "storage_key": document.storage_key,
-            "content_type": document.content_type,
-            "file_size_bytes": document.file_size_bytes,
-        }
-
-        auth_chain = _auth_key_chain()
-        if not auth_chain:
-            auth_chain = [("none", "")]
-
-        max_attempts = max(1, settings.DOCUMENT_EXTRACTOR_HTTP_RETRY_ATTEMPTS)
-        request_attempt = 0
-        for key_slot, key_value in auth_chain:
-            headers = dict(base_headers)
-            if key_slot != "none":
-                auth_header_name, auth_header_value = _build_auth_header(key_value)
-                headers[auth_header_name] = auth_header_value
-
-            for attempt in range(1, max_attempts + 1):
-                request_attempt += 1
-                try:
-                    async with httpx.AsyncClient(timeout=settings.DOCUMENT_EXTRACTOR_HTTP_TIMEOUT_SECONDS) as client:
-                        response = await client.post(settings.DOCUMENT_EXTRACTOR_HTTP_URL, json=payload, headers=headers)
-
-                    if response.status_code in {401, 403}:
-                        if key_slot == "primary" and any(slot == "secondary" for slot, _ in auth_chain):
-                            break
-                        raise ExtractorError(
-                            f"EXTRACTOR_HTTP_{response.status_code}",
-                            f"Extractor request rejected with status {response.status_code}",
-                            retryable=False,
-                            details={
-                                "status_code": response.status_code,
-                                "attempt": attempt,
-                                "key_slot": key_slot,
-                                "request_id": request_id,
-                            },
-                        )
-
-                    if response.status_code == 429 or response.status_code >= 500:
-                        raise ExtractorError(
-                            f"EXTRACTOR_HTTP_{response.status_code}",
-                            f"Extractor service unavailable with status {response.status_code}",
-                            retryable=True,
-                            details={
-                                "status_code": response.status_code,
-                                "attempt": attempt,
-                                "key_slot": key_slot,
-                                "request_id": request_id,
-                            },
-                        )
-
-                    if response.status_code >= 400:
-                        raise ExtractorError(
-                            f"EXTRACTOR_HTTP_{response.status_code}",
-                            f"Extractor request rejected with status {response.status_code}",
-                            retryable=False,
-                            details={
-                                "status_code": response.status_code,
-                                "attempt": attempt,
-                                "key_slot": key_slot,
-                                "request_id": request_id,
-                            },
-                        )
-
-                    provider_payload = response.json()
-
-                    if not isinstance(provider_payload, dict):
-                        raise ExtractorError(
-                            "EXTRACTOR_INVALID_RESPONSE",
-                            "Extractor response must be a JSON object",
-                            retryable=False,
-                            details={"attempt": attempt, "key_slot": key_slot, "request_id": request_id},
-                        )
-
-                    normalized = _normalize_http_payload(
-                        provider_payload,
-                        endpoint=settings.DOCUMENT_EXTRACTOR_HTTP_URL,
-                        attempts=request_attempt,
-                    )
-                    normalized["provider"]["request_id"] = request_id
-                    normalized["provider"]["key_slot"] = key_slot
-                    return normalized
-
-                except httpx.TimeoutException as exc:
-                    extractor_error = ExtractorError(
-                        "EXTRACTOR_HTTP_TIMEOUT",
-                        f"Extractor request timed out: {exc}",
-                        retryable=True,
-                        details={"attempt": attempt, "key_slot": key_slot, "request_id": request_id},
-                    )
-                except httpx.RequestError as exc:
-                    extractor_error = ExtractorError(
-                        "EXTRACTOR_HTTP_REQUEST_ERROR",
-                        f"Extractor request failed: {exc}",
-                        retryable=True,
-                        details={"attempt": attempt, "key_slot": key_slot, "request_id": request_id},
-                    )
-                except ExtractorError as exc:
-                    extractor_error = exc
-
-                if not extractor_error.retryable or attempt == max_attempts:
-                    raise extractor_error
-
-                await asyncio.sleep(_backoff_seconds(attempt))
-
-        raise ExtractorError(
-            "EXTRACTOR_HTTP_RETRY_EXHAUSTED",
-            "Extractor retries exhausted",
-            retryable=True,
-        )
-
 
 def _resolve_provider() -> ExtractionProvider:
     provider_name = settings.DOCUMENT_EXTRACTOR_PROVIDER.lower().strip()
-    if provider_name in {"", "auto"}:
-        if settings.DOCUMENT_EXTRACTOR_HTTP_URL:
-            return HttpExtractionProvider()
-        return ScaffoldedExtractionProvider()
-    if provider_name in {"scaffolded", "mock", "local"}:
-        return ScaffoldedExtractionProvider()
-    if provider_name in {"http", "trained", "model"}:
-        return HttpExtractionProvider()
-    raise RuntimeError(f"Unsupported DOCUMENT_EXTRACTOR_PROVIDER: {settings.DOCUMENT_EXTRACTOR_PROVIDER}")
+    if provider_name in {"disabled", "none", "off"}:
+        return ScaffoldedExtractionProvider() # Fallback
+    return OllamaTextExtractionProvider()
 
 
 async def process_document_inline(db: AsyncSession, document: UploadedDocument) -> UploadedDocument:
