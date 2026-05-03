@@ -73,7 +73,7 @@ alembic upgrade head
 | Service | Command |
 |---------|---------|
 | Backend API | `uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload` |
-| Frontend | `cd frontend && npm run dev` |
+| Frontend | `cd ArchGuard-FE && npm run dev` |
 | Celery Worker | `celery -A app.core.celery_app worker --loglevel=info --pool=solo` |
 
 ### 4. Verify

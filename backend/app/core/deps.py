@@ -1,21 +1,33 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Cookie, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models.user import User
 
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    access_token_cookie: str | None = Cookie(
+        default=None,
+        alias=settings.AUTH_ACCESS_COOKIE_NAME,
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Extract and validate the JWT, return the User ORM object."""
-    payload = decode_access_token(credentials.credentials)
+    raw_token = credentials.credentials if credentials else access_token_cookie
+    if raw_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Authentication required"},
+        )
+
+    payload = decode_access_token(raw_token)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

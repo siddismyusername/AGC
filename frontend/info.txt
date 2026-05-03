@@ -1,1 +1,0 @@
-generate a frontend for this project using next.js and shadcn gather as mush context as you can and create a FE development plan

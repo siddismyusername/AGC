@@ -1,1047 +1,585 @@
-export type ApiEnvelope<T> = {
-  status: 'success' | 'error';
-  data: T;
-  meta?: {
-    request_id: string;
-    timestamp: string;
-  };
-  pagination?: {
-    page: number;
-    per_page: number;
-    total_items: number;
-    total_pages: number;
-    has_next: boolean;
-    has_prev: boolean;
-  };
-};
+import type {
+  AiExtractionResult,
+  AnalyticsHistory,
+  AnalyticsSummary,
+  ApiEnvelope,
+  ArchitectureGraph,
+  ArchitectureVersion,
+  ArchitectureVersionCreatePayload,
+  ArchitectureVersionStatusPayload,
+  AuditEvent,
+  ComplianceCheckPayload,
+  ComplianceReport,
+  DocumentJobStatus,
+  DocumentAiCandidateReviewPayload,
+  DocumentAiCandidateReviewResult,
+  DocumentAiExtractionPayload,
+  DocumentDiagramHintsApplyResult,
+  DocumentDiagramHintsApplyPayload,
+  DocumentProcessResponse,
+  DocumentTrend,
+  GraphComponent,
+  GraphComponentCreatePayload,
+  GraphRelationship,
+  GraphRelationshipCreatePayload,
+  HealthScoreResponse,
+  LoginPayload,
+  LoginResponse,
+  Organization,
+  OrganizationMember,
+  OrganizationUpdatePayload,
+  PaginatedResult,
+  Project,
+  ProjectAnalysisPayload,
+  ProjectAnalysisResult,
+  ProjectCreatePayload,
+  ProjectListItem,
+  ProjectUpdatePayload,
+  RegisterPayload,
+  Rule,
+  RuleBatchCreatePayload,
+  RuleBatchCreateResponse,
+  RuleCreatePayload,
+  RuleUpdatePayload,
+  UploadedDocument,
+  User,
+  Violation,
+  WorkerHealth,
+  WorkerOpsHints,
+  AiCandidateReviewTrend,
+} from "@/lib/types";
 
-export const ACCESS_TOKEN_KEY = 'archguard_access_token';
-export const REFRESH_TOKEN_KEY = 'archguard_refresh_token';
-export const USER_KEY = 'archguard_user';
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
-export type UserOut = {
-  id: string;
-  email: string;
-  full_name: string;
-  role: string;
-  organization_id: string;
-  is_active: boolean;
-  created_at: string;
-};
+let refreshInFlight: Promise<void> | null = null;
+let cachedUser: User | null = null;
 
-export type LoginPayload = {
-  email: string;
-  password: string;
-};
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  detail: string;
 
-export type RegisterPayload = {
-  email: string;
-  password: string;
-  full_name: string;
-  organization_name: string;
-};
-
-export type LoginResponse = {
-  user: UserOut;
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_in: number;
-};
-
-export type ProjectListItem = {
-  id: string;
-  name: string;
-  description?: string | null;
-  language: string;
-  is_active: boolean;
-  created_at: string;
-};
-
-export type ProjectOut = {
-  id: string;
-  name: string;
-  description?: string | null;
-  repository_url?: string | null;
-  default_branch: string;
-  language: string;
-  organization_id: string;
-  created_by: string;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ProjectCreatePayload = {
-  name: string;
-  description?: string | null;
-  repository_url?: string | null;
-  default_branch?: string;
-  language?: string;
-};
-
-export type HealthScoreOut = {
-  health_score: number;
-  total_violations: number;
-  critical_count: number;
-  major_count: number;
-  minor_count: number;
-  info_count: number;
-  report_id: string;
-  checked_at: string;
-};
-
-export type ComplianceReportOut = {
-  id: string;
-  project_id: string;
-  architecture_version_id: string;
-  commit_hash: string | null;
-  branch: string | null;
-  trigger: string;
-  status: string;
-  health_score: number | null;
-  total_violations: number;
-  critical_count: number;
-  major_count: number;
-  minor_count: number;
-  execution_time_ms: number | null;
-  summary: Record<string, unknown> | null;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
-};
-
-export type ViolationOut = {
-  id: string;
-  compliance_report_id: string;
-  rule_id: string | null;
-  violation_type: string;
-  severity: string;
-  source_component: string;
-  target_component: string | null;
-  source_file: string | null;
-  source_line: number | null;
-  description: string;
-  suggestion: string | null;
-  created_at: string;
-};
-
-export type AuditEvent = {
-  id: string;
-  action: string;
-  entity_type: string;
-  entity_id: string | null;
-  user_id: string | null;
-  user_email: string | null;
-  ip_address: string | null;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-  created_at: string;
-};
-
-export type OrganizationOut = {
-  id: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
-  members_count: number;
-  projects_count: number;
-};
-
-export type OrganizationMemberOut = {
-  id: string;
-  email: string;
-  full_name: string;
-  role: string;
-  is_active: boolean;
-  created_at: string;
-};
-
-export type OrganizationUpdatePayload = {
-  name?: string;
-  description?: string | null;
-};
-
-export type AnalyticsSummaryOut = {
-  active_projects: number;
-  total_reports: number;
-  average_health_score: number;
-  critical_violations: number;
-  recent_audit_events: number;
-  last_report_at: string | null;
-  total_documents: number;
-  pending_documents: number;
-  processing_documents: number;
-  completed_documents: number;
-  failed_documents: number;
-};
-
-export type AnalyticsHistoryPointOut = {
-  bucket_start: string;
-  average_health_score: number;
-  reports_count: number;
-  critical_violations: number;
-};
-
-export type AnalyticsHistoryOut = {
-  days: number;
-  points: AnalyticsHistoryPointOut[];
-};
-
-export type DocumentMetricsTrendPointOut = {
-  bucket_start: string;
-  uploaded_count: number;
-  completed_count: number;
-  failed_count: number;
-  processing_count: number;
-  uploaded_delta_day_over_day: number;
-  completed_delta_day_over_day: number;
-  failed_delta_day_over_day: number;
-  processing_delta_day_over_day: number;
-  success_rate_percent: number | null;
-  failure_rate_percent: number | null;
-};
-
-export type DocumentMetricsTrendOut = {
-  days: number;
-  points: DocumentMetricsTrendPointOut[];
-};
-
-export type AICandidateReviewTrendPointOut = {
-  bucket_start: string;
-  review_count: number;
-  reviewed_documents: number;
-  accepted_candidates: number;
-  rejected_candidates: number;
-  acceptance_rate_percent: number | null;
-};
-
-export type AICandidateReviewTrendOut = {
-  days: number;
-  project_id: string | null;
-  total_reviews: number;
-  reviewed_documents: number;
-  accepted_candidates: number;
-  rejected_candidates: number;
-  acceptance_rate_percent: number | null;
-  last_reviewed_at: string | null;
-  points: AICandidateReviewTrendPointOut[];
-};
-
-export type WorkerHealthOut = {
-  queue_backend: string;
-  redis_status: 'healthy' | 'unreachable';
-  redis_latency_ms: number | null;
-  celery_worker_count: number;
-  worker_status: 'healthy' | 'degraded' | 'down';
-  checked_at: string;
-};
-
-export type WorkerOpsCommandOut = {
-  label: string;
-  command: string;
-  when_to_use: string;
-};
-
-export type WorkerOpsHintsOut = {
-  queue_backend: string;
-  worker_status: 'healthy' | 'degraded' | 'down';
-  recommended_actions: string[];
-  runbook_commands: WorkerOpsCommandOut[];
-  last_replay_requested_at: string | null;
-  last_replay_document_count: number;
-  checked_at: string;
-};
-
-export type ArchitectureVersionOut = {
-  id: string;
-  project_id: string;
-  version_number: number;
-  status: 'draft' | 'under_review' | 'approved' | 'active' | 'deprecated';
-  description: string | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-  activated_at: string | null;
-};
-
-export type GraphComponentOut = {
-  uid: string;
-  name: string;
-  component_type: string;
-  layer_level: number | null;
-  description: string | null;
-};
-
-export type GraphComponentCreatePayload = {
-  name: string;
-  component_type: 'service' | 'layer' | 'module' | 'database' | 'ui' | 'api' | 'gateway' | 'external' | 'queue';
-  layer_level?: number;
-  description?: string;
-};
-
-export type GraphRelationshipOut = {
-  id?: string | null;
-  source_uid: string;
-  target_uid: string;
-  type: string;
-  properties: Record<string, unknown>;
-};
-
-export type GraphRelationshipCreatePayload = {
-  source_uid: string;
-  target_uid: string;
-  type: 'ALLOWED_DEPENDENCY' | 'FORBIDDEN_DEPENDENCY' | 'REQUIRES' | 'LAYER_ABOVE';
-  rule_id?: string;
-};
-
-export type GraphOut = {
-  components: GraphComponentOut[];
-  relationships: GraphRelationshipOut[];
-  stats: {
-    total_components: number;
-    total_relationships: number;
-  };
-};
-
-export type RuleOut = {
-  id: string;
-  architecture_version_id: string;
-  rule_text: string;
-  rule_type: 'forbidden_dependency' | 'required_dependency' | 'layer_constraint' | 'cycle_prohibition' | 'naming_convention' | 'custom';
-  source_component: string | null;
-  target_component: string | null;
-  severity: 'critical' | 'major' | 'minor';
-  is_ai_generated: boolean;
-  confidence_score: number | null;
-  is_active: boolean;
-  created_by: string | null;
-  created_at: string;
-};
-
-export type RuleCreatePayload = {
-  rule_text: string;
-  rule_type: RuleOut['rule_type'];
-  source_component?: string;
-  target_component?: string;
-  severity: RuleOut['severity'];
-};
-
-export type RuleUpdatePayload = {
-  rule_text?: string;
-  severity?: RuleOut['severity'];
-  is_active?: boolean;
-};
-
-export type DocumentFileType = 'text' | 'diagram' | 'pdf' | 'markdown';
-
-export type DocumentOut = {
-  id: string;
-  project_id: string;
-  file_name: string;
-  file_type: DocumentFileType;
-  description?: string | null;
-  file_size_bytes: number;
-  content_type: string;
-  storage_key: string;
-  processing_status: 'pending' | 'processing' | 'completed' | 'failed';
-  extracted_data?: Record<string, unknown> | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type ExtractorDiagnosticsHistoryEntry = {
-  timestamp: string;
-  event: string;
-  trigger?: string;
-  processing_status: DocumentOut['processing_status'];
-  queue_backend: string | null;
-  task_id: string | null;
-  request_id: string | null;
-  key_slot: string | null;
-  provider_attempts: number | null;
-  error_code: string | null;
-  retryable: boolean | null;
-};
-
-export type ExtractorDiagnosticsSummary = {
-  project_name: string;
-  document_name: string;
-  file_type: DocumentFileType;
-  processing_status: DocumentOut['processing_status'];
-  queue_backend: string | null;
-  request_id: string | null;
-  key_slot: string | null;
-  provider_attempts: number | null;
-  error_code: string | null;
-  retryable: boolean | null;
-  history: ExtractorDiagnosticsHistoryEntry[];
-  updated_at: string;
-};
-
-export type DocumentProcessResponse =
-  | DocumentOut
-  | {
-      document_id: string;
-      processing_status: 'processing';
-      message: string;
-    };
-
-export type DocumentJobStatusOut = {
-  document_id: string;
-  processing_status: DocumentOut['processing_status'];
-  job: {
-    mode: 'background';
-    task_id: string | null;
-    queue_backend: 'celery' | 'fastapi-background';
-    status: string;
-    queued_at: string;
-    started_at?: string;
-    completed_at?: string;
-    failed_at?: string;
-    error?: string;
-  };
-  runtime_state: string | null;
-  extractor_diagnostics: {
-    provider_name: string | null;
-    provider_endpoint: string | null;
-    provider_attempts: number | null;
-    request_id: string | null;
-    key_slot: string | null;
-    error_code: string | null;
-  };
-  extractor_diagnostics_history: ExtractorDiagnosticsHistoryEntry[];
-  updated_at: string | null;
-};
-
-export type DeadLetterItemOut = {
-  document_id: string;
-  file_name: string;
-  retryable: boolean;
-  error_code: string | null;
-  error_message: string | null;
-  failed_at: string | null;
-  replay_count: number;
-  last_replay_requested_at: string | null;
-};
-
-export type DeadLetterListOut = {
-  project_id: string;
-  total: number;
-  items: DeadLetterItemOut[];
-};
-
-export type WorkerReplayQueueItemOut = {
-  document_id: string;
-  queue_backend: string;
-  task_id: string | null;
-  replay_count: number;
-};
-
-export type WorkerReplayQueueOut = {
-  project_id: string;
-  requested_limit: number;
-  queued_count: number;
-  items: WorkerReplayQueueItemOut[];
-  checked_at: string;
-};
-
-export type AIDocumentExtractionPayload = {
-  architecture_version_id: string;
-  auto_create_rules?: boolean;
-  persist_candidates?: boolean;
-};
-
-export type AIDocumentCandidateReviewPayload = {
-  architecture_version_id: string;
-  accepted_rule_indexes?: number[];
-  rejected_rule_indexes?: number[];
-  accepted_entity_indexes?: number[];
-  rejected_entity_indexes?: number[];
-  accepted_relationship_indexes?: number[];
-  rejected_relationship_indexes?: number[];
-  review_note?: string;
-};
-
-export type AIDocumentCandidateReviewOut = {
-  project_id: string;
-  document_id: string;
-  architecture_version_id: string;
-  reviewed_at: string;
-  reviewed_by: string;
-  accepted_rules_count: number;
-  rejected_rules_count: number;
-  accepted_entities_count: number;
-  rejected_entities_count: number;
-  accepted_relationships_count: number;
-  rejected_relationships_count: number;
-  review_history_count: number;
-};
-
-export type AIDiagramHintsApplyPayload = {
-  architecture_version_id: string;
-  persist_applied_metadata?: boolean;
-  review_note?: string;
-  selected_components?: string[];
-  selected_relationships?: Array<{
-    source: string;
-    target: string;
-    relation: string;
-  }>;
-};
-
-export type AIDiagramHintsApplyOut = {
-  project_id: string;
-  document_id: string;
-  architecture_version_id: string;
-  created_components_count: number;
-  created_relationships_count: number;
-  skipped_relationships_count: number;
-  component_name_to_uid: Record<string, string>;
-};
-
-export type AIDocumentRuleExtractionOut = {
-  summary: string;
-  keywords: string[];
-  extracted_rules: Array<{
-    rule_text: string;
-    rule_type: RuleOut['rule_type'];
-    source_component: string | null;
-    target_component: string | null;
-    severity: RuleOut['severity'];
-    confidence: number | null;
-    model_version: string | null;
-  }>;
-  entities: Array<{
-    text: string;
-    label: string;
-    start: number | null;
-    end: number | null;
-    confidence: number | null;
-  }>;
-  relationships: Array<{
-    source: string;
-    target: string;
-    relation: string;
-    confidence: number | null;
-  }>;
-  processing_time_ms: number;
-  model_info: Record<string, unknown>;
-  created_rule_ids: string[];
-  architecture_version_id: string;
-  project_id: string;
-  document_id: string;
-  file_name: string;
-  file_type: string;
-  input_source_fields: string[];
-};
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api/v1';
-
-let refreshInFlight: Promise<string> | null = null;
-
-function isBrowser(): boolean {
-  return typeof window !== 'undefined';
-}
-
-export function getSessionTokens(): { accessToken: string | null; refreshToken: string | null } {
-  if (!isBrowser()) {
-    return { accessToken: null, refreshToken: null };
+  constructor(status: number, detail: string, code = "API_ERROR") {
+    super(detail);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
   }
-
-  return {
-    accessToken: localStorage.getItem(ACCESS_TOKEN_KEY),
-    refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY),
-  };
-}
-
-export function storeAuthSession(payload: { access_token: string; refresh_token: string; user?: UserOut }): void {
-  if (!isBrowser()) {
-    return;
-  }
-
-  localStorage.setItem(ACCESS_TOKEN_KEY, payload.access_token);
-  localStorage.setItem(REFRESH_TOKEN_KEY, payload.refresh_token);
-  if (payload.user) {
-    localStorage.setItem(USER_KEY, JSON.stringify(payload.user));
-  }
-}
-
-export function clearAuthSession(): void {
-  if (!isBrowser()) {
-    return;
-  }
-
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
-  if (!text) {
-    return {} as T;
-  }
+  if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
 
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {},
-  accessToken?: string,
-): Promise<ApiEnvelope<T>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
-  };
+function extractError(status: number, body: unknown, fallback: string) {
+  if (body && typeof body === "object") {
+    const record = body as Record<string, unknown>;
+    const detail = record.detail;
 
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
+    if (detail && typeof detail === "object") {
+      const detailRecord = detail as Record<string, unknown>;
+      return {
+        code: String(detailRecord.code ?? "API_ERROR"),
+        message: String(detailRecord.message ?? fallback),
+      };
+    }
+
+    if (typeof detail === "string") {
+      return { code: "API_ERROR", message: detail };
+    }
+
+    if (typeof record.message === "string") {
+      return { code: "API_ERROR", message: record.message };
+    }
+  }
+
+  return { code: "API_ERROR", message: `${fallback} (status ${status})` };
+}
+
+function clearTokens() {
+  cachedUser = null;
+}
+
+export function clearSession() {
+  clearTokens();
+}
+
+export function getStoredUser(): User | null {
+  return cachedUser;
+}
+
+async function requestEnvelope<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<ApiEnvelope<T>> {
+  const headers = new Headers(options.headers);
+  const hasBody = options.body !== undefined && options.body !== null;
+
+  if (hasBody && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    credentials: "include",
     headers,
   });
 
+  const body = await parseJson<unknown>(response).catch(() => undefined);
+
   if (!response.ok) {
-    const errorBody = await parseJson<{ detail?: { code?: string; message?: string } | string }>(response);
-    let message = `Request failed with status ${response.status}`;
-
-    if (typeof errorBody.detail === 'string') {
-      message = errorBody.detail;
-    } else if (errorBody.detail?.message) {
-      message = errorBody.detail.message;
-    }
-
-    throw new Error(message);
+    const parsed = extractError(response.status, body, response.statusText);
+    throw new ApiError(response.status, parsed.message, parsed.code);
   }
 
-  return parseJson<ApiEnvelope<T>>(response);
+  if (body && typeof body === "object" && "data" in body) {
+    return body as ApiEnvelope<T>;
+  }
+
+  return {
+    status: "success",
+    data: body as T,
+  };
 }
 
-async function refreshAccessToken(): Promise<string> {
-  const { refreshToken } = getSessionTokens();
-  if (!refreshToken) {
-    clearAuthSession();
-    throw new Error('Session expired. Please sign in again.');
-  }
-
-  const response = await apiRequest<Pick<LoginResponse, 'access_token' | 'refresh_token' | 'token_type' | 'expires_in'>>(
-    '/auth/refresh',
-    {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    },
-  );
-
-  storeAuthSession({
-    access_token: response.data.access_token,
-    refresh_token: response.data.refresh_token,
+async function refreshTokens() {
+  await requestEnvelope<
+    Pick<LoginResponse, "access_token" | "refresh_token" | "token_type" | "expires_in">
+  >("/auth/refresh", {
+    method: "POST",
   });
-
-  return response.data.access_token;
 }
 
-async function getValidAccessToken(): Promise<string> {
-  const { accessToken } = getSessionTokens();
-  if (!accessToken) {
-    throw new Error('Sign in required');
-  }
-  return accessToken;
-}
-
-async function apiRequestWithAuth<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
-  const accessToken = await getValidAccessToken();
-
+async function authenticatedEnvelope<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<ApiEnvelope<T>> {
   try {
-    return await apiRequest<T>(path, options, accessToken);
+    return await requestEnvelope<T>(path, options);
   } catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('status 401')) {
+    if (!(error instanceof ApiError) || error.status !== 401) {
       throw error;
     }
 
     if (!refreshInFlight) {
-      refreshInFlight = refreshAccessToken();
+      refreshInFlight = refreshTokens();
     }
 
     try {
-      const refreshedAccessToken = await refreshInFlight;
-      return await apiRequest<T>(path, options, refreshedAccessToken);
+      await refreshInFlight;
+      return await requestEnvelope<T>(path, options);
+    } catch (refreshError) {
+      clearTokens();
+      throw refreshError;
     } finally {
       refreshInFlight = null;
     }
   }
 }
 
-export async function login(payload: LoginPayload): Promise<LoginResponse> {
-  const response = await apiRequest<LoginResponse>('/auth/login', {
-    method: 'POST',
+async function authData<T>(path: string, options: RequestInit = {}) {
+  const envelope = await authenticatedEnvelope<T>(path, options);
+  return envelope.data;
+}
+
+async function authPage<T>(path: string, options: RequestInit = {}): Promise<PaginatedResult<T>> {
+  const envelope = await authenticatedEnvelope<T[]>(path, options);
+  return {
+    data: envelope.data,
+    pagination: envelope.pagination ?? null,
+  };
+}
+
+function query(params: Record<string, string | number | boolean | null | undefined>) {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== "") {
+      search.set(key, String(value));
+    }
+  });
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function login(payload: LoginPayload) {
+  const envelope = await requestEnvelope<LoginResponse>("/auth/login", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
-  storeAuthSession({
-    access_token: response.data.access_token,
-    refresh_token: response.data.refresh_token,
-    user: response.data.user,
-  });
-  return response.data;
+  cachedUser = envelope.data.user;
+  return envelope.data;
 }
 
-export async function register(payload: RegisterPayload): Promise<LoginResponse> {
-  const response = await apiRequest<LoginResponse>('/auth/register', {
-    method: 'POST',
+export async function register(payload: RegisterPayload) {
+  const envelope = await requestEnvelope<LoginResponse>("/auth/register", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
-  storeAuthSession({
-    access_token: response.data.access_token,
-    refresh_token: response.data.refresh_token,
-    user: response.data.user,
-  });
-  return response.data;
+  cachedUser = envelope.data.user;
+  return envelope.data;
 }
 
-export async function getCurrentUser(): Promise<UserOut> {
-  const response = await apiRequestWithAuth<UserOut>('/auth/me');
-  return response.data;
-}
-
-export async function getProjects(): Promise<ProjectListItem[]> {
-  const response = await apiRequestWithAuth<ProjectListItem[]>('/projects?per_page=20');
-  return response.data;
-}
-
-export async function createProject(payload: ProjectCreatePayload): Promise<ProjectOut> {
-  const response = await apiRequestWithAuth<ProjectOut>('/projects', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function getProject(projectId: string): Promise<ProjectOut> {
-  const response = await apiRequestWithAuth<ProjectOut>(`/projects/${projectId}`);
-  return response.data;
-}
-
-export async function getProjectHealth(projectId: string): Promise<HealthScoreOut | null> {
+export async function logout() {
   try {
-    const response = await apiRequestWithAuth<HealthScoreOut>(`/projects/${projectId}/compliance/health`);
-    return response.data;
+    await requestEnvelope("/auth/logout", {
+      method: "POST",
+    });
   } catch {
-    return null;
+    // Best effort - always clear locally
   }
+  clearSession();
 }
 
-export async function listComplianceReports(projectId: string, page = 1, pageSize = 1): Promise<ComplianceReportOut[]> {
-  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-  const response = await apiRequestWithAuth<ComplianceReportOut[]>(`/projects/${projectId}/compliance/reports?${params.toString()}`);
-  return response.data;
+export async function getCurrentUser() {
+  if (cachedUser) return cachedUser;
+  const user = await authData<User>("/auth/me");
+  cachedUser = user;
+  return user;
 }
 
-export async function listComplianceReportViolations(
+export function getMyOrganization() {
+  return authData<Organization>("/organizations/me");
+}
+
+export function updateMyOrganization(payload: OrganizationUpdatePayload) {
+  return authData<Organization>("/organizations/me", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listOrganizationMembers() {
+  return authData<OrganizationMember[]>("/organizations/me/members");
+}
+
+export function listProjects(params: { page?: number; per_page?: number; search?: string } = {}) {
+  return authPage<ProjectListItem>(
+    `/projects${query({ page: params.page ?? 1, per_page: params.per_page ?? 20, search: params.search })}`
+  );
+}
+
+export function createProject(payload: ProjectCreatePayload) {
+  return authData<Project>("/projects", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getProject(projectId: string) {
+  return authData<Project>(`/projects/${projectId}`);
+}
+
+export function updateProject(projectId: string, payload: ProjectUpdatePayload) {
+  return authData<Project>(`/projects/${projectId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteProject(projectId: string) {
+  return authData<{ message: string }>(`/projects/${projectId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listArchitectureVersions(projectId: string) {
+  return authData<ArchitectureVersion[]>(`/projects/${projectId}/architecture`);
+}
+
+export function createArchitectureVersion(
+  projectId: string,
+  payload: ArchitectureVersionCreatePayload
+) {
+  return authData<ArchitectureVersion>(`/projects/${projectId}/architecture`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateArchitectureVersionStatus(
+  projectId: string,
+  versionId: string,
+  payload: ArchitectureVersionStatusPayload
+) {
+  return authData<ArchitectureVersion>(
+    `/projects/${projectId}/architecture/${versionId}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }
+  );
+}
+
+export function getProjectHealth(projectId: string, versionId?: string) {
+  return authData<HealthScoreResponse>(
+    `/projects/${projectId}/compliance/health${query({ version_id: versionId })}`
+  );
+}
+
+export function runComplianceCheck(projectId: string, payload: ComplianceCheckPayload) {
+  return authData<ComplianceReport>(`/projects/${projectId}/compliance/check`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function triggerProjectAnalysis(projectId: string, payload: ProjectAnalysisPayload) {
+  return authData<ProjectAnalysisResult>(`/projects/${projectId}/analyze`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listComplianceReports(
+  projectId: string,
+  params: { page?: number; page_size?: number } = {}
+) {
+  return authPage<ComplianceReport>(
+    `/projects/${projectId}/compliance/reports${query({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+    })}`
+  );
+}
+
+export function getComplianceReport(projectId: string, reportId: string) {
+  return authData<ComplianceReport>(`/projects/${projectId}/compliance/reports/${reportId}`);
+}
+
+export function listViolations(
   projectId: string,
   reportId: string,
-  page = 1,
-  pageSize = 3,
-): Promise<ViolationOut[]> {
-  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-  const response = await apiRequestWithAuth<ViolationOut[]>(`/projects/${projectId}/compliance/reports/${reportId}/violations?${params.toString()}`);
-  return response.data;
-}
-
-export async function getAuditEvents(page = 1, perPage = 8): Promise<AuditEvent[]> {
-  const response = await apiRequestWithAuth<AuditEvent[]>(`/audit/events?page=${page}&per_page=${perPage}`);
-  return response.data;
-}
-
-export async function getOrganization(): Promise<OrganizationOut> {
-  const response = await apiRequestWithAuth<OrganizationOut>('/organizations/me');
-  return response.data;
-}
-
-export async function getOrganizationMembers(): Promise<OrganizationMemberOut[]> {
-  const response = await apiRequestWithAuth<OrganizationMemberOut[]>('/organizations/me/members');
-  return response.data;
-}
-
-export async function updateOrganization(payload: OrganizationUpdatePayload): Promise<OrganizationOut> {
-  const response = await apiRequestWithAuth<OrganizationOut>('/organizations/me', {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function getAnalyticsSummary(): Promise<AnalyticsSummaryOut> {
-  const response = await apiRequestWithAuth<AnalyticsSummaryOut>('/analytics/summary');
-  return response.data;
-}
-
-export async function getAnalyticsHistory(days = 14): Promise<AnalyticsHistoryOut> {
-  const response = await apiRequestWithAuth<AnalyticsHistoryOut>(`/analytics/history?days=${days}`);
-  return response.data;
-}
-
-export async function getDocumentMetricsTrend(days = 14): Promise<DocumentMetricsTrendOut> {
-  const response = await apiRequestWithAuth<DocumentMetricsTrendOut>(`/analytics/documents/trends?days=${days}`);
-  return response.data;
-}
-
-export async function getAICandidateReviewTrend(days = 14, projectId?: string): Promise<AICandidateReviewTrendOut> {
-  const params = new URLSearchParams({ days: String(days) });
-  if (projectId) {
-    params.set('project_id', projectId);
-  }
-  const response = await apiRequestWithAuth<AICandidateReviewTrendOut>(`/analytics/ai-candidate-reviews?${params.toString()}`);
-  return response.data;
-}
-
-export async function getWorkerHealth(): Promise<WorkerHealthOut> {
-  const response = await apiRequestWithAuth<WorkerHealthOut>('/analytics/worker-health');
-  return response.data;
-}
-
-export async function getWorkerOpsHints(): Promise<WorkerOpsHintsOut> {
-  const response = await apiRequestWithAuth<WorkerOpsHintsOut>('/analytics/worker-ops');
-  return response.data;
-}
-
-export async function getArchitectureVersions(projectId: string): Promise<ArchitectureVersionOut[]> {
-  const response = await apiRequestWithAuth<ArchitectureVersionOut[]>(`/projects/${projectId}/architecture`);
-  return response.data;
-}
-
-export async function getArchitectureGraph(versionId: string): Promise<GraphOut> {
-  const response = await apiRequestWithAuth<GraphOut>(`/architecture/${versionId}/graph`);
-  return response.data;
-}
-
-export async function createArchitectureComponent(versionId: string, payload: GraphComponentCreatePayload): Promise<GraphComponentOut> {
-  const response = await apiRequestWithAuth<GraphComponentOut>(`/architecture/${versionId}/components`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function createArchitectureRelationship(versionId: string, payload: GraphRelationshipCreatePayload): Promise<GraphRelationshipOut> {
-  const response = await apiRequestWithAuth<GraphRelationshipOut>(`/architecture/${versionId}/relationships`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function deleteArchitectureRelationship(
-  versionId: string,
-  payload: GraphRelationshipCreatePayload,
-): Promise<void> {
-  const query = new URLSearchParams({
-    source_uid: payload.source_uid,
-    target_uid: payload.target_uid,
-    type: payload.type,
-  });
-
-  await apiRequestWithAuth<{ message: string }>(`/architecture/${versionId}/relationships?${query.toString()}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function deleteArchitectureComponent(versionId: string, componentUid: string): Promise<void> {
-  await apiRequestWithAuth<{ message: string }>(`/architecture/${versionId}/components/${componentUid}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function listRules(versionId: string): Promise<RuleOut[]> {
-  const response = await apiRequestWithAuth<RuleOut[]>(`/architecture/${versionId}/rules`);
-  return response.data;
-}
-
-export async function createRule(versionId: string, payload: RuleCreatePayload): Promise<RuleOut> {
-  const response = await apiRequestWithAuth<RuleOut>(`/architecture/${versionId}/rules`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function updateRule(versionId: string, ruleId: string, payload: RuleUpdatePayload): Promise<RuleOut> {
-  const response = await apiRequestWithAuth<RuleOut>(`/architecture/${versionId}/rules/${ruleId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload),
-  });
-  return response.data;
-}
-
-export async function deactivateRule(versionId: string, ruleId: string): Promise<void> {
-  await apiRequestWithAuth<{ message: string }>(`/architecture/${versionId}/rules/${ruleId}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function listDocuments(
-  projectId: string,
-  fileType?: string,
-  status?: string,
-  search?: string
-): Promise<DocumentOut[]> {
-  const params = new URLSearchParams();
-  if (fileType) {
-    params.append('file_type', fileType);
-  }
-  if (status) {
-    params.append('processing_status', status);
-  }
-  if (search) {
-    params.append('search', search);
-  }
-  const query = params.toString();
-  const response = await apiRequestWithAuth<DocumentOut[]>(
-    `/projects/${projectId}/documents${query ? `?${query}` : ''}`
+  params: { page?: number; page_size?: number; severity?: string; violation_type?: string } = {}
+) {
+  return authPage<Violation>(
+    `/projects/${projectId}/compliance/reports/${reportId}/violations${query({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 50,
+      severity: params.severity,
+      violation_type: params.violation_type,
+    })}`
   );
-  return response.data;
+}
+
+export function listRules(
+  versionId: string,
+  params: { rule_type?: string; severity?: string; is_active?: boolean | "all" } = {}
+) {
+  return authData<Rule[]>(
+    `/architecture/${versionId}/rules${query({
+      rule_type: params.rule_type,
+      severity: params.severity,
+      is_active: params.is_active === "all" ? undefined : params.is_active ?? true,
+    })}`
+  );
+}
+
+export function createRule(versionId: string, payload: RuleCreatePayload) {
+  return authData<Rule>(`/architecture/${versionId}/rules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createRulesBatch(versionId: string, payload: RuleBatchCreatePayload) {
+  return authData<RuleBatchCreateResponse>(`/architecture/${versionId}/rules/batch`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateRule(versionId: string, ruleId: string, payload: RuleUpdatePayload) {
+  return authData<Rule>(`/architecture/${versionId}/rules/${ruleId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deactivateRule(versionId: string, ruleId: string) {
+  return authData<{ message: string }>(`/architecture/${versionId}/rules/${ruleId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getArchitectureGraph(versionId: string) {
+  return authData<ArchitectureGraph>(`/architecture/${versionId}/graph`);
+}
+
+export function createArchitectureComponent(
+  versionId: string,
+  payload: GraphComponentCreatePayload
+) {
+  return authData<GraphComponent>(`/architecture/${versionId}/components`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createArchitectureRelationship(
+  versionId: string,
+  payload: GraphRelationshipCreatePayload
+) {
+  return authData<GraphRelationship>(`/architecture/${versionId}/relationships`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteArchitectureComponent(versionId: string, componentUid: string) {
+  return authData<{ message: string }>(`/architecture/${versionId}/components/${componentUid}`, {
+    method: "DELETE",
+  });
+}
+
+export function deleteArchitectureRelationship(
+  versionId: string,
+  payload: Pick<GraphRelationshipCreatePayload, "source_uid" | "target_uid" | "type">
+) {
+  return authData<{ message: string }>(
+    `/architecture/${versionId}/relationships${query(payload)}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export function listDocuments(
+  projectId: string,
+  params: { file_type?: string; processing_status?: string; search?: string } = {}
+) {
+  return authData<UploadedDocument[]>(
+    `/projects/${projectId}/documents${query({
+      file_type: params.file_type,
+      processing_status: params.processing_status,
+      search: params.search,
+    })}`
+  );
 }
 
 export async function uploadDocument(
   projectId: string,
   file: File,
-  fileType: DocumentFileType,
+  fileType: string,
   description?: string
-): Promise<DocumentOut> {
+) {
   const formData = new FormData();
-  formData.append('file', file);
-  formData.append('file_type', fileType);
-  if (description) {
-    formData.append('description', description);
-  }
-
-  const accessToken = await getValidAccessToken();
-  const headers: Record<string, string> = {};
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
+  formData.append("file", file);
+  formData.append("file_type", fileType);
+  if (description) formData.append("description", description);
 
   const response = await fetch(`${API_BASE_URL}/projects/${projectId}/documents/upload`, {
-    method: 'POST',
-    headers,
+    method: "POST",
     body: formData,
+    credentials: "include",
   });
+
+  const body = await parseJson<unknown>(response).catch(() => undefined);
 
   if (!response.ok) {
-    const errorBody = await parseJson<{ detail?: { code?: string; message?: string } | string }>(response);
-    let message = `Upload failed with status ${response.status}`;
-    if (typeof errorBody.detail === 'string') {
-      message = errorBody.detail;
-    } else if (errorBody.detail?.message) {
-      message = errorBody.detail.message;
-    }
-    throw new Error(message);
+    const parsed = extractError(response.status, body, response.statusText);
+    throw new ApiError(response.status, parsed.message, parsed.code);
   }
 
-  const envelope = await parseJson<ApiEnvelope<DocumentOut>>(response);
-  return envelope.data;
+  return (body as ApiEnvelope<UploadedDocument>).data;
 }
 
-export async function deleteDocument(projectId: string, docId: string): Promise<void> {
-  await apiRequestWithAuth<{ message: string }>(`/projects/${projectId}/documents/${docId}`, {
-    method: 'DELETE',
+export function getDocument(projectId: string, docId: string) {
+  return authData<UploadedDocument>(`/projects/${projectId}/documents/${docId}`);
+}
+
+export function deleteDocument(projectId: string, docId: string) {
+  return authData<{ message: string }>(`/projects/${projectId}/documents/${docId}`, {
+    method: "DELETE",
   });
 }
 
-export async function processDocument(
+export function processDocument(projectId: string, docId: string, force = false) {
+  return authData<DocumentProcessResponse>(`/projects/${projectId}/documents/${docId}/process`, {
+    method: "POST",
+    body: JSON.stringify({ mode: "background", force }),
+  });
+}
+
+export function getDocumentJobStatus(projectId: string, docId: string) {
+  return authData<DocumentJobStatus>(`/projects/${projectId}/documents/${docId}/job`);
+}
+
+export function extractRulesFromDocument(
   projectId: string,
   docId: string,
-  mode: 'inline' | 'background' = 'inline',
-  force = false,
-): Promise<DocumentProcessResponse> {
-  const response = await apiRequestWithAuth<DocumentProcessResponse>(
-    `/projects/${projectId}/documents/${docId}/process`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ mode, force }),
-    },
-  );
-  return response.data;
-}
-
-export async function getDocumentJobStatus(projectId: string, docId: string): Promise<DocumentJobStatusOut> {
-  const response = await apiRequestWithAuth<DocumentJobStatusOut>(`/projects/${projectId}/documents/${docId}/job`);
-  return response.data;
-}
-
-export async function getDeadLetterDocuments(projectId: string, retryableOnly = true): Promise<DeadLetterListOut> {
-  const query = new URLSearchParams({ retryable_only: String(retryableOnly) });
-  const response = await apiRequestWithAuth<DeadLetterListOut>(`/projects/${projectId}/documents/dead-letter?${query.toString()}`);
-  return response.data;
-}
-
-export async function replayDeadLetterDocument(projectId: string, docId: string, allowNonRetryable = false): Promise<{ document_id: string; processing_status: string; queue_backend: string; replay_count: number; }> {
-  const response = await apiRequestWithAuth<{ document_id: string; processing_status: string; queue_backend: string; replay_count: number; }>(
-    `/projects/${projectId}/documents/${docId}/replay`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ allow_non_retryable: allowNonRetryable }),
-    },
-  );
-  return response.data;
-}
-
-export async function replayRetryableDeadLetterBatch(projectId: string, limit = 10, allowNonRetryable = false): Promise<WorkerReplayQueueOut> {
-  const response = await apiRequestWithAuth<WorkerReplayQueueOut>(
-    '/analytics/worker-actions/replay-retryable',
-    {
-      method: 'POST',
-      body: JSON.stringify({ project_id: projectId, limit, allow_non_retryable: allowNonRetryable }),
-    },
-  );
-  return response.data;
-}
-
-export async function extractRulesFromDocument(
-  projectId: string,
-  docId: string,
-  payload: AIDocumentExtractionPayload,
-): Promise<AIDocumentRuleExtractionOut> {
-  const response = await apiRequestWithAuth<AIDocumentRuleExtractionOut>(
+  payload: DocumentAiExtractionPayload
+) {
+  return authData<AiExtractionResult>(
     `/ai/projects/${projectId}/documents/${docId}/rules/extract`,
     {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(payload),
-    },
+    }
   );
-  return response.data;
 }
 
-export async function applyDiagramHintsFromDocument(
+export function applyDiagramHintsFromDocument(
   projectId: string,
   docId: string,
-  payload: AIDiagramHintsApplyPayload,
-): Promise<AIDiagramHintsApplyOut> {
-  const response = await apiRequestWithAuth<AIDiagramHintsApplyOut>(
+  payload: DocumentDiagramHintsApplyPayload
+) {
+  return authData<DocumentDiagramHintsApplyResult>(
     `/ai/projects/${projectId}/documents/${docId}/diagram-hints/apply`,
     {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(payload),
-    },
+    }
   );
-  return response.data;
 }
 
-export async function reviewDocumentAICandidates(
+export function reviewDocumentAiCandidates(
   projectId: string,
   docId: string,
-  payload: AIDocumentCandidateReviewPayload,
-): Promise<AIDocumentCandidateReviewOut> {
-  const response = await apiRequestWithAuth<AIDocumentCandidateReviewOut>(
+  payload: DocumentAiCandidateReviewPayload
+) {
+  return authData<DocumentAiCandidateReviewResult>(
     `/ai/projects/${projectId}/documents/${docId}/candidates/review`,
     {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(payload),
-    },
+    }
   );
-  return response.data;
 }
+
+export function getAnalyticsSummary() {
+  return authData<AnalyticsSummary>("/analytics/summary");
+}
+
+export function getAnalyticsHistory(days = 14) {
+  return authData<AnalyticsHistory>(`/analytics/history${query({ days })}`);
+}
+
+export function getDocumentTrends(days = 14) {
+  return authData<DocumentTrend>(`/analytics/documents/trends${query({ days })}`);
+}
+
+export function getAiCandidateReviewTrend(days = 14, projectId?: string) {
+  return authData<AiCandidateReviewTrend>(
+    `/analytics/ai-candidate-reviews${query({ days, project_id: projectId })}`
+  );
+}
+
+export function getWorkerHealth() {
+  return authData<WorkerHealth>("/analytics/worker-health");
+}
+
+export function getWorkerOpsHints() {
+  return authData<WorkerOpsHints>("/analytics/worker-ops");
+}
+
+export function getAuditEvents(params: { page?: number; per_page?: number } = {}) {
+  return authPage<AuditEvent>(
+    `/audit/events${query({ page: params.page ?? 1, per_page: params.per_page ?? 10 })}`
+  );
+}
+
+export { API_BASE_URL };

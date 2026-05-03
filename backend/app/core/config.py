@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # ── Auth Cookies ──
+    AUTH_ACCESS_COOKIE_NAME: str = "archguard_access_token"
+    AUTH_REFRESH_COOKIE_NAME: str = "archguard_refresh_token"
+    AUTH_COOKIE_SECURE: bool = False
+    AUTH_COOKIE_SAMESITE: str = "lax"
+    AUTH_COOKIE_DOMAIN: str | None = None
+
     # ── CORS ──
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
